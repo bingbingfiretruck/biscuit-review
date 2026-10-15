@@ -55,6 +55,17 @@ npm run deploy                           # 得到 https://biscuit-review-api.<�
 
 **国内访问必读**：`*.workers.dev` 在国内被 DNS 污染，剪辑师直接打不开。要买一个域名（阿里云/新网约 10 元/年），DNS 托管到 Cloudflare，在 Worker 的「设置 → 域和路由」绑定自定义域名（如 `api.你的域名`）。
 
+### 远端冒烟（部署后验证）
+
+```bash
+cd worker
+API_BASE=https://biscuit-review-api.biscuit-review-worker.workers.dev/api ADMIN_KEY="$(cat .admin-key.txt)" npm test
+```
+
+会新建一个「冒烟项目」跑完 32 步后删掉。2026-10-15 线上 32/32 通过。
+
+**国内跑要注意**：Node 的 `fetch` 不读系统代理，直连 `workers.dev` 会全部 `fetch failed`。Node ≥ 24 在命令前加 `NODE_USE_ENV_PROXY=1` 即可；Node 22 需要 `npm i -D undici` 后用预加载脚本 `node --import ./proxy.mjs test/smoke.mjs`，脚本内容两行：`import { setGlobalDispatcher, EnvHttpProxyAgent } from 'undici'; setGlobalDispatcher(new EnvHttpProxyAgent());`。
+
 ### 2. 页面（GitHub Pages）
 
 1. 把 `js/config.js` 里的 `PROD_API_BASE` 改成 Worker 地址加 `/api`（例如 `https://api.你的域名/api`）。
