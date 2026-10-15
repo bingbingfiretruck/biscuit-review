@@ -1,13 +1,13 @@
 # 饼干在线审片
 
-饼干（博主）和剪辑师两个人用的客稿审片站：饼干按时间码写意见、在画面上画标记、传参考图；剪辑师逐条勾「已修改」、写修改说明、发布新版客稿。意见通过 Cloudflare D1 实时同步，视频上传到 Cloudflare R2，两边打开链接都能直接播放。
+饼干（博主）和剪辑师两个人用的客稿审片站：饼干按时间码写意见、在画面上画标记、传参考图；剪辑师逐条勾「已修改」、写修改说明、发布新版客稿。意见通过 Cloudflare D1 实时同步，视频上传到 Cloudflare KV（免费 1 GB，无需绑卡），两边打开链接都能直接播放。
 
 形式参考「二个零工作流程 · 在线审片」客稿页。设计稿见 `docs/superpowers/specs/`，实施计划见 `docs/superpowers/plans/`。
 
 ## 线上地址（2026-10-15 已部署）
 
 - 管理台：https://bingbingfiretruck.github.io/biscuit-review/
-- 后端 API：https://biscuit-review-api.biscuit-review-worker.workers.dev （Cloudflare Worker + D1，数据库 `biscuit-review`）
+- 后端 API：https://biscuit-review-api.biscuit-review-worker.workers.dev （Cloudflare Worker + D1 数据库 `biscuit-review` + KV 命名空间 `VIDEO_KV` 存视频）
 - 管理口令：在本机 `worker/.admin-key.txt`（不入库）。要换口令：`cd worker && npx wrangler secret put ADMIN_KEY`。
 - 访问说明：`*.workers.dev` 在中国大陆被 DNS 污染，饼干自己在国内用时要开着代理；剪辑师在日本直接打开即可。以后不想开代理，买个域名绑到 Worker 即可（见下方部署第 1 步）。
 
@@ -44,15 +44,13 @@ cd worker && npm test                                                 # 27 步�
 
 ## 部署
 
-### 1. 后端（Cloudflare Worker + D1 + R2，免费额度内）
-
-先在 Cloudflare 控制台开通 R2（R2 即使只用免费 10 GB 也要求先绑一张支付卡，饼干本人操作）。然后：
+### 1. 后端（Cloudflare Worker + D1 + KV，免费额度内）
 
 ```bash
 cd worker
 npx wrangler login                       # 浏览器授权一次（饼干本人操作）
 npx wrangler d1 create biscuit-review    # 把输出的 database_id 填进 wrangler.toml（已填：b9d9554b-…）
-npx wrangler r2 bucket create biscuit-review-videos
+npx wrangler kv namespace create VIDEO_KV  # 把输出的 id 填进 wrangler.toml（已填：b9f1ada8…）
 npm run migrate:remote
 npx wrangler secret put ADMIN_KEY        # 输入管理口令
 npm run deploy                           # 得到 https://biscuit-review-api.<子域>.workers.dev
@@ -80,5 +78,5 @@ API_BASE=https://biscuit-review-api.biscuit-review-worker.workers.dev/api ADMIN_
 ## 容量与限制
 
 - D1 免费版：单库 500 MB、单行 2 MB。画面标记和参考图在浏览器压到 ≤1280px 的 JPEG 再入库，一张约 100–300 KB。
-- R2 免费版：10 GB 存储、不收流量费。单个视频最大 2 GB，按 20 MB 分片经 Worker 上传；播放走 Worker 的 Range 转发。空间不够时在历史版本里清理视频。
+- 视频存 KV：免费 1 GB、不收流量费、无需绑卡。单个视频最大 400 MB，按 8 MB 分片经 Worker 上传；播放走 Worker 的 Range 转发；每个项目自动只保留最近两版的视频，管理台显示用量。以后要 10 GB 可开通 R2（需绑卡）后改 `wrangler.toml` 为 `[[r2_buckets]] binding = "VIDEOS"`，代码两种都支持（`worker/src/videostore.js`）。
 - 参考附件只支持图片，每条意见最多 6 张；视频转码、通知推送不在范围内。

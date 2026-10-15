@@ -134,7 +134,7 @@ GET /p 响应里 feedback 的 annotation 只给缩略图（≤320px），大图�
 ## 10. 2026-10-15 晚追加：视频托管
 
 用户要求两边打开链接都能直接看视频。改动：
-- 存储：Cloudflare R2（桶 `biscuit-review-videos`，Worker 绑定 `VIDEOS`）。需账号开通 R2（要求绑支付卡）。
+- 存储：用户不愿绑卡，改用 Workers 免费 KV（命名空间 `VIDEO_KV`，1 GB，8 MB 分片）；R2 实现保留在 `videostore.js`，有 `VIDEOS` 绑定时自动切换。配额：单视频 ≤400 MB、总量 ≤1 GB；上传完成后每项目只保留最近两版视频；管理台显示用量。KV 最终一致，托管视频首次加载失败时前端 10 秒自动重试。
 - 上传：浏览器按 20 MB 分片 `PUT /api/p/versions/:id/upload/part`，先 `upload/start` 建多段上传，最后 `upload/complete`；失败自动重试 3 次后 `abort`。管理台建项目后直接传 V1；发布新版后直接传新版；审片页对无视频版本提供「上传客稿视频」。
 - 播放：`GET /api/p/videos/:id?t=<token>`，Worker 按 Range 转发 R2（206），`<video crossorigin="anonymous">` 以便抓帧画标记。网络慢时仍可「用本地文件播放」。
 - 清理：owner 可对历史版本「清理视频释放空间」；删项目时顺带删 R2 对象。
