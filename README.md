@@ -4,6 +4,13 @@
 
 形式参考「二个零工作流程 · 在线审片」客稿页。设计稿见 `docs/superpowers/specs/`，实施计划见 `docs/superpowers/plans/`。
 
+## 线上地址（2026-10-15 已部署）
+
+- 管理台：https://bingbingfiretruck.github.io/biscuit-review/
+- 后端 API：https://biscuit-review-api.biscuit-review-worker.workers.dev （Cloudflare Worker + D1，数据库 `biscuit-review`）
+- 管理口令：在本机 `worker/.admin-key.txt`（不入库）。要换口令：`cd worker && npx wrangler secret put ADMIN_KEY`。
+- 访问说明：`*.workers.dev` 在中国大陆被 DNS 污染，饼干自己在国内用时要开着代理；剪辑师在日本直接打开即可。以后不想开代理，买个域名绑到 Worker 即可（见下方部署第 1 步）。
+
 ## 怎么用
 
 1. 打开 **管理台**（`index.html`），输入管理口令，新建项目：起名、选帧率、选择剪辑师发来的 V1 视频文件（只读文件名/大小/时长，不上传）。
@@ -40,7 +47,7 @@ cd worker && npm test                                                 # 27 步�
 ```bash
 cd worker
 npx wrangler login                       # 浏览器授权一次（饼干本人操作）
-npx wrangler d1 create biscuit-review    # 把输出的 database_id 填进 wrangler.toml
+npx wrangler d1 create biscuit-review    # 把输出的 database_id 填进 wrangler.toml（已填：b9d9554b-…）
 npm run migrate:remote
 npx wrangler secret put ADMIN_KEY        # 输入管理口令
 npm run deploy                           # 得到 https://biscuit-review-api.<子域>.workers.dev
