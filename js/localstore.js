@@ -72,8 +72,11 @@ export function createLocalApi({ token = '' } = {}) {
     fail('NOT_FOUND', '找不到这条意见', 404);
   }
 
+  const noStorage = async () => fail('NO_STORAGE', '本地模式不能上传视频，部署后端后才可以', 503);
   return {
     isLocal: true,
+    uploadStart: noStorage, uploadPart: noStorage, uploadComplete: noStorage, uploadAbort: noStorage, deleteVideo: noStorage,
+    videoUrl: () => null,
 
     async getState() {
       const { p, role } = locate(load());

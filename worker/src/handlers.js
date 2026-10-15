@@ -3,11 +3,14 @@ import { fail, assert, nowIso, newId, newToken, json, readJson } from './util.js
 const FPS = [24, 25, 30, 50, 60];
 const MAX_IMAGE = 1900000;
 const MAX_ATTACHMENTS = 6;
+const PART_SIZE = 20 * 1024 * 1024;
+const MAX_VIDEO = 2 * 1024 * 1024 * 1024;
 
 // ---------- 形状 ----------
 const publicProject = (p) => ({ id: p.id, name: p.name, fps: p.fps, current_version: p.current_version, created_at: p.created_at, updated_at: p.updated_at });
 const publicVersion = (v, feedback = []) => ({
   id: v.id, number: v.number, video_name: v.video_name, video_size: v.video_size, video_duration: v.video_duration,
+  video_status: v.video_status || 'none', video_mime: v.video_mime || null,
   status: v.status, closed_at: v.closed_at, approved_at: v.approved_at, created_at: v.created_at, feedback,
 });
 const publicFeedback = (f, attachments = []) => ({
@@ -102,6 +105,10 @@ export async function adminDelete({ env, params }) {
   const id = params[0];
   const p = await env.DB.prepare('SELECT id FROM projects WHERE id = ?').bind(id).first();
   assert(p, 'NOT_FOUND', '找不到这个项目', 404);
+  if (env.VIDEOS) {
+    const listed = await env.VIDEOS.list({ prefix: `${id}/` });
+    if (listed.objects.length) await env.VIDEOS.delete(listed.objects.map((o) => o.key));
+  }
   await env.DB.batch([
     env.DB.prepare('DELETE FROM attachments WHERE feedback_id IN (SELECT f.id FROM feedback f JOIN versions v ON v.id = f.version_id WHERE v.project_id = ?)').bind(id),
     env.DB.prepare('DELETE FROM feedback WHERE version_id IN (SELECT id FROM versions WHERE project_id = ?)').bind(id),
@@ -281,4 +288,135 @@ export async function unapprove(ctx) {
   return transition(ctx,
     (cur) => { assert(cur.status === 'approved', 'INVALID_STATE', '这一版还没有确认通过', 409); },
     (cur) => ({ status: cur.closed_at ? 'closed' : 'collecting', approved_at: null }));
+}
+
+// ---------- 视频托管（R2） ----------
+async function findVersion(ctx, id) {
+  const v = await ctx.env.DB.prepare('SELECT * FROM versions WHERE id = ? AND project_id = ?').bind(id, ctx.project.id).first();
+  assert(v, 'NOT_FOUND', '找不到这个客稿版本', 404);
+  return v;
+}
+const extOf = (mime) => (mime === 'video/quicktime' ? '.mov' : mime === 'video/webm' ? '.webm' : '.mp4');
+const needStorage = (env) => assert(env.VIDEOS, 'NO_STORAGE', '服务器还没有配置视频存储', 503);
+
+async function discardVideo(env, v) {
+  if (!v.video_key) return;
+  if (v.upload_id) { try { await env.VIDEOS.resumeMultipartUpload(v.video_key, v.upload_id).abort(); } catch { /* 可能已失效 */ } }
+  else { try { await env.VIDEOS.delete(v.video_key); } catch { /* 可能已不存在 */ } }
+}
+
+export async function uploadStart(ctx) {
+  const { env, project, params, request } = ctx;
+  needStorage(env);
+  const v = await findVersion(ctx, params[0]);
+  const body = await readJson(request);
+  const size = Number(body.size);
+  assert(Number.isInteger(size) && size > 0 && size <= MAX_VIDEO, 'BAD_REQUEST', '视频大小不合法（最大 2 GB）');
+  const mime = String(body.mime || 'video/mp4');
+  assert(mime.startsWith('video/') && mime.length <= 64, 'BAD_REQUEST', '只支持视频文件');
+  await discardVideo(env, v);
+  const key = `${project.id}/${v.id}${extOf(mime)}`;
+  const mp = await env.VIDEOS.createMultipartUpload(key, { httpMetadata: { contentType: mime } });
+  await env.DB.batch([
+    env.DB.prepare('UPDATE versions SET video_key = ?, video_mime = ?, video_status = ?, upload_id = ?, video_size = ? WHERE id = ?')
+      .bind(key, mime, 'uploading', mp.uploadId, size, v.id),
+    touch(env, project.id),
+  ]);
+  return json({ upload_id: mp.uploadId, part_size: PART_SIZE });
+}
+
+export async function uploadPart(ctx) {
+  const { env, params, request } = ctx;
+  needStorage(env);
+  const v = await findVersion(ctx, params[0]);
+  const url = new URL(request.url);
+  const uploadId = url.searchParams.get('upload_id') || '';
+  const partNumber = Number(url.searchParams.get('part'));
+  assert(v.video_status === 'uploading' && v.upload_id && uploadId === v.upload_id, 'INVALID_STATE', '这个上传已失效，请重新开始', 409);
+  assert(Number.isInteger(partNumber) && partNumber >= 1 && partNumber <= 10000, 'BAD_REQUEST', '分片编号不合法');
+  const data = await request.arrayBuffer();
+  assert(data.byteLength > 0 && data.byteLength <= PART_SIZE, 'BAD_REQUEST', '分片大小不合法');
+  const part = await env.VIDEOS.resumeMultipartUpload(v.video_key, uploadId).uploadPart(partNumber, data);
+  return json({ part_number: part.partNumber, etag: part.etag });
+}
+
+export async function uploadComplete(ctx) {
+  const { env, project, params, request } = ctx;
+  needStorage(env);
+  const v = await findVersion(ctx, params[0]);
+  const body = await readJson(request);
+  assert(v.video_status === 'uploading' && v.upload_id && body.upload_id === v.upload_id, 'INVALID_STATE', '这个上传已失效，请重新开始', 409);
+  assert(Array.isArray(body.parts) && body.parts.length > 0 && body.parts.length <= 10000, 'BAD_REQUEST', '缺少分片信息');
+  const parts = body.parts.map((p) => ({ partNumber: Number(p.part_number), etag: String(p.etag) }));
+  const obj = await env.VIDEOS.resumeMultipartUpload(v.video_key, v.upload_id).complete(parts);
+  await env.DB.batch([
+    env.DB.prepare('UPDATE versions SET video_status = ?, upload_id = NULL, video_size = ? WHERE id = ?').bind('ready', obj.size, v.id),
+    touch(env, project.id),
+  ]);
+  return json({ version: await loadVersion(env, v.id) });
+}
+
+export async function uploadAbort(ctx) {
+  const { env, project, params } = ctx;
+  needStorage(env);
+  const v = await findVersion(ctx, params[0]);
+  if (v.video_status === 'uploading') {
+    await discardVideo(env, v);
+    await env.DB.batch([
+      env.DB.prepare('UPDATE versions SET video_key = NULL, video_mime = NULL, video_status = ?, upload_id = NULL WHERE id = ?').bind('none', v.id),
+      touch(env, project.id),
+    ]);
+  }
+  return json({ version: await loadVersion(env, v.id) });
+}
+
+export async function deleteVideo(ctx) {
+  need(ctx, 'owner');
+  const { env, project, params } = ctx;
+  needStorage(env);
+  const v = await findVersion(ctx, params[0]);
+  await discardVideo(env, v);
+  await env.DB.batch([
+    env.DB.prepare('UPDATE versions SET video_key = NULL, video_mime = NULL, video_status = ?, upload_id = NULL WHERE id = ?').bind('none', v.id),
+    touch(env, project.id),
+  ]);
+  return json({ version: await loadVersion(env, v.id) });
+}
+
+/** 按 Range 转发 R2 里的视频，供 <video src> 直接播放 */
+export async function getVideo(ctx) {
+  const { env, params, request } = ctx;
+  needStorage(env);
+  const v = await findVersion(ctx, params[0]);
+  assert(v.video_status === 'ready' && v.video_key, 'NOT_FOUND', '这一版没有托管视频', 404);
+  const headers = new Headers();
+  if (request.method === 'HEAD') {
+    const head = await env.VIDEOS.head(v.video_key);
+    assert(head, 'NOT_FOUND', '视频文件不存在', 404);
+    head.writeHttpMetadata(headers);
+    headers.set('Accept-Ranges', 'bytes');
+    headers.set('Content-Length', String(head.size));
+    headers.set('ETag', head.httpEtag);
+    return new Response(null, { status: 200, headers });
+  }
+  const obj = await env.VIDEOS.get(v.video_key, { range: request.headers, onlyIf: request.headers });
+  assert(obj, 'NOT_FOUND', '视频文件不存在', 404);
+  obj.writeHttpMetadata(headers);
+  headers.set('Accept-Ranges', 'bytes');
+  headers.set('ETag', obj.httpEtag);
+  headers.set('Cache-Control', 'private, max-age=86400');
+  if (!obj.body) return new Response(null, { status: 304, headers });
+  let status = 200;
+  if (obj.range && request.headers.has('Range')) {
+    let { offset, length, suffix } = obj.range;
+    if (suffix != null) { length = Math.min(suffix, obj.size); offset = obj.size - length; }
+    if (offset == null) offset = 0;
+    if (length == null) length = obj.size - offset;
+    headers.set('Content-Range', `bytes ${offset}-${offset + length - 1}/${obj.size}`);
+    headers.set('Content-Length', String(length));
+    status = 206;
+  } else {
+    headers.set('Content-Length', String(obj.size));
+  }
+  return new Response(obj.body, { status, headers });
 }

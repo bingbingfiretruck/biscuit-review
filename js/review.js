@@ -11,6 +11,7 @@ import { createRemoteApi } from './api.js';
 import { createLocalApi } from './localstore.js';
 import { createPlayer } from './player.js';
 import { openMarkup } from './markup.js';
+import { uploadVideo } from './upload.js';
 
 const token = new URLSearchParams(location.search).get('t') || '';
 
@@ -18,8 +19,10 @@ const els = {
   shell: $('#shell'), gate: $('#gate'), gateTitle: $('#gateTitle'), gateText: $('#gateText'), gateActions: $('#gateActions'),
   projectName: $('#projectName'), versionChip: $('#versionChip'), roleChip: $('#roleChip'), themeBtn: $('#themeBtn'),
   banner: $('#banner'), railTitle: $('#railTitle'), railHint: $('#railHint'), versionList: $('#versionList'),
-  playerRoot: $('#player'), fileWarn: $('#fileWarn'), panel: $('#panel'),
+  playerRoot: $('#player'), fileWarn: $('#fileWarn'), uploadBar: $('#uploadBar'), panel: $('#panel'),
 };
+const uploadInput = h('input', { type: 'file', accept: 'video/*,.mp4,.mov,.m4v,.webm', class: 'vh', id: 'uploadInput', onChange: (e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) startUpload(f, selected()); } });
+document.body.append(uploadInput);
 
 const state = {
   api: null, localMode: false, connLost: false,
@@ -27,7 +30,7 @@ const state = {
   selectedVersion: null, activeFeedbackId: null,
   sort: storage('biscuit.sort', 'timecode'),
   draft: { text: '', whole: false, lockedTimecode: null, annotation: null, attachments: [] },
-  currentTime: 0, loadedFile: null,
+  currentTime: 0, loadedFile: null, playerSource: null, uploading: null,
   lastUpdatedAt: null, pollTimer: null, pendingRender: false,
 };
 const cache = { annotations: new Map(), attachments: new Map() };
@@ -69,7 +72,7 @@ async function boot() {
   if (state.localMode) showBanner('本地模式：没有连接服务器，提交的内容只保存在这台设备，不会同步给对方。', 'info');
   schedulePoll();
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { clearTimeout(state.pollTimer); poll(); } });
-  window.addEventListener('beforeunload', (e) => { if (hasDraft()) { e.preventDefault(); e.returnValue = ''; } });
+  window.addEventListener('beforeunload', (e) => { if (hasDraft() || state.uploading) { e.preventDefault(); e.returnValue = ''; } });
 }
 
 function failGate(e) {
@@ -163,8 +166,7 @@ function renderAll() {
   renderRail();
   renderPanel();
   renderMarkers();
-  renderFileWarn();
-  player.setExpected({ name: sel.video_name, size: sel.video_size });
+  syncPlayerSource();
 }
 
 function renderRail() {
@@ -187,12 +189,13 @@ function renderRail() {
         catch (err) { toast(err.message, 'warn'); }
       },
     }, ...FPS_OPTIONS.map((f) => h('option', { value: f, selected: f === fps() }, `${f} fps`))));
+  const videoNote = state.api.isLocal ? '' : sel.video_status === 'ready' ? ` · 视频已托管 ${fmtBytes(sel.video_size)}` : sel.video_status === 'uploading' ? ' · 视频上传中' : ' · 未上传视频';
   if (sel.number === cur) {
     els.railTitle.textContent = `客稿 V${sel.number} · 当前`;
-    els.railHint.textContent = `${STATUS_LABEL[sel.status]} · ${fmtDate(sel.created_at)} 发出`;
+    els.railHint.textContent = `${STATUS_LABEL[sel.status]} · ${fmtDate(sel.created_at)} 发出${videoNote}`;
   } else {
     els.railTitle.textContent = `客稿 V${sel.number} · 历史`;
-    els.railHint.textContent = `历史只读 · ${STATUS_LABEL[sel.status]} · ${fmtDate(sel.created_at)} 发出`;
+    els.railHint.textContent = `历史只读 · ${STATUS_LABEL[sel.status]} · ${fmtDate(sel.created_at)} 发出${videoNote}`;
   }
 }
 
@@ -239,7 +242,7 @@ function renderMarkers() {
 function renderFileWarn() {
   const v = selected();
   const f = state.loadedFile;
-  if (!f || !v) { els.fileWarn.hidden = true; return; }
+  if (!f || !v || state.playerSource?.kind !== 'local') { els.fileWarn.hidden = true; return; }
   const mismatch = f.name !== v.video_name || f.size !== v.video_size;
   els.fileWarn.hidden = !mismatch;
   if (mismatch) {
@@ -251,8 +254,84 @@ function renderFileWarn() {
 
 function handleFile(file) {
   state.loadedFile = { name: file.name, size: file.size };
+  state.playerSource = { versionId: selected().id, kind: 'local' };
   renderFileWarn();
   renderAnnoBox();
+}
+
+// ---------- 播放器来源：托管视频 / 本地文件 ----------
+function syncPlayerSource() {
+  const v = selected();
+  const src = state.playerSource;
+  if (!state.uploading && !(src && src.versionId === v.id)) {
+    if (v.video_status === 'ready' && !state.api.isLocal) {
+      player.loadUrl(state.api.videoUrl(v.id), { name: v.video_name });
+      state.playerSource = { versionId: v.id, kind: 'hosted' };
+      state.loadedFile = null;
+    } else if (src && src.kind === 'hosted') {
+      player.clear();
+      state.playerSource = null;
+      state.loadedFile = null;
+    }
+  }
+  renderFileWarn();
+  renderEmptyActions(v);
+  renderAnnoBox();
+}
+
+function renderEmptyActions(v) {
+  const nodes = [];
+  if (state.api.isLocal) {
+    player.setEmptyText({ title: '选择客稿视频', hint: `本地模式：请选择「${v.video_name}」（${fmtBytes(v.video_size)}），视频只在这台设备上播放。` });
+  } else if (v.video_status === 'uploading' && !state.uploading) {
+    player.setEmptyText({ title: '对方正在上传视频', hint: '上传完成后会自动显示；也可以先用本地文件播放。' });
+  } else if (v.video_status !== 'ready') {
+    player.setEmptyText({ title: '这一版还没有上传视频', hint: `上传后你和剪辑师打开链接都能直接播放。这一版的文件是「${v.video_name}」（${fmtBytes(v.video_size)}）。` });
+    nodes.push(h('button', { class: 'btn btn--primary', type: 'button', onClick: () => uploadInput.click() }, '上传客稿视频'));
+  } else {
+    player.setEmptyText({ title: '正在加载托管视频…', hint: '网络慢时也可以用本地文件播放。' });
+  }
+  nodes.push(h('label', { class: nodes.length ? 'btn btn--ghost' : 'btn btn--primary', for: 'player-file' }, nodes.length ? '用本地文件播放' : '选择客稿视频'));
+  player.setEmptyActions(nodes);
+}
+
+async function startUpload(file, v) {
+  if (state.uploading) return toast('已有一个上传在进行', 'warn');
+  if (!file.type.startsWith('video/') && !/\.(mp4|mov|m4v|webm)$/i.test(file.name)) return toast('请选择视频文件', 'warn');
+  if (file.size > 2 * 1024 * 1024 * 1024) return toast('视频超过 2 GB，请压缩后再传', 'warn');
+  state.uploading = { versionId: v.id };
+  player.loadFile(file); // 上传者本地先播，不用等上传完
+  state.playerSource = { versionId: v.id, kind: 'local' };
+  renderUploadBar(v, 0, file.size);
+  try {
+    await uploadVideo({ api: state.api, versionId: v.id, file, onProgress: (loaded, total) => renderUploadBar(v, loaded, total) });
+    toast('视频已上传，对方打开链接就能直接看');
+  } catch (e) {
+    toast(e.message || '上传失败', 'warn');
+  } finally {
+    state.uploading = null;
+    els.uploadBar.hidden = true;
+    try { await loadState(); } catch { /* 轮询会再试 */ }
+    renderAll();
+  }
+}
+function renderUploadBar(v, loaded, total) {
+  const pct = total ? Math.round((loaded / total) * 100) : 0;
+  els.uploadBar.hidden = false;
+  els.uploadBar.replaceChildren(
+    h('div', { class: 'row row--between' }, h('span', {}, `正在上传客稿 V${v.number} 的视频 · ${pct}%`), h('span', { class: 'mono small' }, `${fmtBytes(loaded)} / ${fmtBytes(total)}`)),
+    h('div', { class: 'progress' }, h('div', { class: 'progress__bar', style: { width: `${pct}%` } })),
+    h('div', { class: 'hint' }, '上传期间请不要关闭页面。上传完成后对方打开链接即可播放。'));
+}
+async function clearVideo(v) {
+  const ok = await confirmModal({ title: `清理客稿 V${v.number} 的视频？`, text: '清理后这一版的意见仍可回看，但时间码不再能定位画面。可以释放存储空间。', okText: '清理', danger: true });
+  if (!ok) return;
+  try {
+    await state.api.deleteVideo(v.id);
+    toast('视频已清理');
+    if (state.playerSource?.versionId === v.id) { player.clear(); state.playerSource = null; }
+    await loadState();
+  } catch (e) { toast(e.message || '清理失败', 'warn'); }
 }
 
 // ---------- 写意见 ----------
@@ -486,10 +565,12 @@ function renderListCard(v, { readOnly }) {
   else if (readOnly) body = h('div', { class: 'empty' }, h('div', { class: 'empty__title' }, '这个客稿版本没有收到意见'));
   else if (owner) body = h('div', { class: 'empty' }, h('div', { class: 'empty__title' }, '这一轮还没有提交意见'), '播放视频，在需要调整的位置暂停并添加第一条意见。');
   else body = h('div', { class: 'empty' }, h('div', { class: 'empty__title' }, '饼干还没有提交意见'), '意见提交后会在这里逐条显示，点一条就能跳到对应画面。');
+  const canClear = readOnly && owner && !state.api.isLocal && v.video_status === 'ready';
   return h('section', { class: 'card', id: 'listCard' },
     h('div', { class: 'card__head' },
       h('div', { class: 'row' }, h('div', { class: 'card__title' }, title), h('span', { class: 'chip chip--muted' }, `${list.length} 条`), readOnly && h('span', { class: 'chip chip--muted' }, '历史只读')),
       list.length > 1 && sortToggle()),
+    canClear ? h('div', { class: 'row row--between' }, h('span', { class: 'hint' }, `这一版视频已托管 · ${fmtBytes(v.video_size)}`), h('button', { class: 'btn btn--sm btn--ghost', type: 'button', onClick: () => clearVideo(v) }, '清理视频释放空间')) : null,
     body,
     !readOnly && state.role === 'editor' && list.length ? h('div', { class: 'hint' }, '点一条意见即可跳到对应画面；改完勾「已修改」，饼干那边会同步看到。') : null);
 }
@@ -601,8 +682,8 @@ function renderPublishCard(v) {
   return h('section', { class: `card${editor ? '' : ' card--tight'}` },
     h('div', { class: 'card__head' }, h('div', { class: 'card__title' }, editor ? '发布新版客稿' : '登记新版客稿')),
     h('div', { class: 'hint' }, editor
-      ? `改完后选择 V${next} 的视频文件。只记录文件名、大小和时长，不上传；记得把文件发给饼干。`
-      : `剪辑师发来 V${next} 却没在这里登记时，你可以代为登记。`),
+      ? (state.api.isLocal ? `改完后选择 V${next} 的视频文件。本地模式只记录文件名，不上传。` : `改完后选择 V${next} 的视频文件，会直接上传，饼干打开链接就能看。`)
+      : (state.api.isLocal ? `剪辑师发来 V${next} 却没在这里登记时，你可以代为登记。` : `剪辑师把 V${next} 发给你却没上传时，你可以在这里代为上传。`)),
     h('input', { type: 'file', accept: 'video/*,.mp4,.mov,.m4v,.webm', class: 'vh', id: 'newVersionInput', onChange: (e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) publishVersion(f, next); } }),
     h('label', { class: `btn ${editor ? 'btn--primary' : 'btn--ghost'}`, for: 'newVersionInput' }, `选择 V${next} 文件`));
 }
@@ -616,11 +697,12 @@ async function publishVersion(file, next) {
   });
   if (!ok) return;
   try {
-    await state.api.createVersion(meta);
+    const res = await state.api.createVersion(meta);
     toast(`客稿 V${next} 已发布`);
     state.selectedVersion = null;
     state.activeFeedbackId = null;
     await loadState();
-    player.loadFile(file);
+    if (state.api.isLocal) { player.loadFile(file); state.playerSource = { versionId: res.version.id, kind: 'local' }; renderFileWarn(); }
+    else startUpload(file, res.version);
   } catch (e) { toast(e.message || '发布失败', 'warn'); }
 }

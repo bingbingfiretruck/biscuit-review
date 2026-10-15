@@ -130,3 +130,12 @@ GET /p 响应里 feedback 的 annotation 只给缩略图（≤320px），大图�
 2. 我执行：建 D1、跑迁移、设置管理口令、`wrangler deploy`。
 3. 我执行：建 GitHub 仓库 `biscuit-review`，推送，开 Pages。
 4. 绑定自定义域名到 Worker（国内访问必需）：你提供一个域名，DNS 托管到 Cloudflare。
+
+## 10. 2026-10-15 晚追加：视频托管
+
+用户要求两边打开链接都能直接看视频。改动：
+- 存储：Cloudflare R2（桶 `biscuit-review-videos`，Worker 绑定 `VIDEOS`）。需账号开通 R2（要求绑支付卡）。
+- 上传：浏览器按 20 MB 分片 `PUT /api/p/versions/:id/upload/part`，先 `upload/start` 建多段上传，最后 `upload/complete`；失败自动重试 3 次后 `abort`。管理台建项目后直接传 V1；发布新版后直接传新版；审片页对无视频版本提供「上传客稿视频」。
+- 播放：`GET /api/p/videos/:id?t=<token>`，Worker 按 Range 转发 R2（206），`<video crossorigin="anonymous">` 以便抓帧画标记。网络慢时仍可「用本地文件播放」。
+- 清理：owner 可对历史版本「清理视频释放空间」；删项目时顺带删 R2 对象。
+- `versions` 新增 `video_key / video_mime / video_status(none|uploading|ready) / upload_id`（迁移 0003）。

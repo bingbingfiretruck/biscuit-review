@@ -8,5 +8,9 @@ database_name = "biscuit-review"
 database_id = "b9d9554b-dcea-4608-bd1b-538e821c0aae"
 migrations_dir = "migrations"
 
+[[r2_buckets]]
+binding = "VIDEOS"
+bucket_name = "biscuit-review-videos"
+
 [vars]
 ALLOWED_ORIGINS = "https://bingbingfiretruck.github.io,http://localhost:8788,http://127.0.0.1:8788"

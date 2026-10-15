@@ -9,7 +9,8 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
   let objectUrl = null;
   let file = null;
 
-  const video = h('video', { class: 'player__video', playsinline: true, preload: 'metadata', 'aria-label': '当前客稿视频' });
+  // crossorigin：托管视频跨域播放时仍能抓帧到 canvas（Worker 会回 CORS 头）
+  const video = h('video', { class: 'player__video', playsinline: true, preload: 'metadata', crossorigin: 'anonymous', 'aria-label': '当前客稿视频' });
   const markerLayer = h('div', { class: 'player__markers', 'aria-label': '意见标记' });
   const range = h('input', { class: 'player__range', type: 'range', min: 0, max: 1000, step: 1, value: 0, 'aria-label': '视频时间线' });
   const timeLabel = h('span', { class: 'player__time mono' }, '00:00.00');
@@ -20,10 +21,11 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
   const fileInput = h('input', { type: 'file', accept: 'video/*,.mp4,.mov,.m4v,.webm', class: 'vh', id: 'player-file', onChange: (e) => { const f = e.target.files?.[0]; if (f) loadFile(f); e.target.value = ''; } });
   const emptyTitle = h('div', { class: 'player__empty-title' }, '选择客稿视频');
   const emptyHint = h('div', { class: 'player__empty-hint' }, '视频只在这台设备上播放，不会上传。');
+  const emptyActions = h('div', { class: 'row', style: { justifyContent: 'center' } }, h('label', { class: 'btn btn--primary', for: 'player-file' }, '选择客稿视频'));
   const empty = h('div', { class: 'player__empty' },
     h('div', { class: 'player__empty-icon', 'aria-hidden': 'true' }, '🎬'),
     emptyTitle, emptyHint,
-    h('label', { class: 'btn btn--primary', for: 'player-file' }, '选择客稿视频'),
+    emptyActions,
     fileInput);
 
   const controls = h('div', { class: 'player__controls' },
@@ -143,6 +145,29 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
     root.focus({ preventScroll: true });
     onFileChosen(f);
   }
+  /** 播放后端托管的视频 */
+  function loadUrl(url, { name = '托管视频' } = {}) {
+    file = { name, hosted: true };
+    if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
+    video.src = url;
+    empty.hidden = true;
+    controls.hidden = false;
+  }
+  function clear() {
+    file = null;
+    if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    stage.style.aspectRatio = '';
+    markers = [];
+    renderMarkers();
+    empty.hidden = false;
+    controls.hidden = true;
+  }
+  /** 空态里的按钮区（由页面决定：上传 / 本地文件） */
+  function setEmptyActions(nodes) { emptyActions.replaceChildren(...nodes.filter(Boolean)); }
+  function setEmptyText({ title, hint }) { if (title) emptyTitle.textContent = title; if (hint != null) emptyHint.textContent = hint; }
 
   /** 抓当前帧 → canvas（原始分辨率，最长边 ≤ maxEdge） */
   function captureFrame(maxEdge = 1280) {
@@ -169,14 +194,15 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
   }
 
   function setExpected({ name, size } = {}) {
-    if (name) emptyHint.textContent = `请选择剪辑师发来的「${name}」（${size ? fmtBytes(size) : '大小未知'}）。视频只在这台设备上播放，不会上传。`;
+    if (name) emptyHint.textContent = `这一版的文件是「${name}」（${size ? fmtBytes(size) : '大小未知'}）。`;
   }
 
   return {
     el: root, video,
-    loadFile, seek, stepFrames, stepSeconds, setMarkers, setFps, setTheater, captureFrame, setExpected,
+    loadFile, loadUrl, clear, setEmptyActions, setEmptyText, seek, stepFrames, stepSeconds, setMarkers, setFps, setTheater, captureFrame, setExpected,
     currentTime: () => video.currentTime || 0,
     hasFile: () => !!file,
+    isHosted: () => !!(file && file.hosted),
     file: () => file,
     pause: () => video.pause(),
   };

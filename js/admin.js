@@ -3,6 +3,7 @@ import { API_BASE, STATUS_LABEL } from './config.js';
 import { $, h, fmtBytes, fmtDuration, fmtDate, readVideoMeta, toast, confirmModal, copyText, storage, storageSet, initTheme, currentTheme, setTheme } from './util.js';
 import { createRemoteApi } from './api.js';
 import { createLocalApi } from './localstore.js';
+import { uploadVideo } from './upload.js';
 
 const els = {
   banner: $('#banner'), modeChip: $('#modeChip'), themeBtn: $('#themeBtn'),
@@ -11,7 +12,8 @@ const els = {
   videoInput: $('#videoInput'), videoMeta: $('#videoMeta'), createBtn: $('#createBtn'),
   linksCard: $('#linksCard'), projectList: $('#projectList'), refreshBtn: $('#refreshBtn'),
 };
-const state = { api: null, localMode: !API_BASE, adminKey: storage('biscuit.adminKey', ''), video: null, projects: [] };
+const state = { api: null, localMode: !API_BASE, adminKey: storage('biscuit.adminKey', ''), video: null, videoFile: null, projects: [], uploading: false };
+window.addEventListener('beforeunload', (e) => { if (state.uploading) { e.preventDefault(); e.returnValue = ''; } });
 
 initTheme();
 updateThemeBtn();
@@ -71,6 +73,7 @@ els.videoInput.addEventListener('change', async (e) => {
   if (!f) return;
   els.videoMeta.replaceChildren(h('span', { class: 'muted' }, '正在读取视频信息…'));
   state.video = await readVideoMeta(f);
+  state.videoFile = f;
   els.videoMeta.replaceChildren(
     h('div', { class: 'file-pick__name' }, state.video.name),
     h('div', { class: 'muted' }, `${fmtBytes(state.video.size)} · ${fmtDuration(state.video.duration)}`));
@@ -87,9 +90,12 @@ els.createForm.addEventListener('submit', async (e) => {
     const res = await state.api.adminCreate({ name, fps: Number(els.fpsInput.value), video: state.video });
     toast(`项目「${res.project.name}」已创建`);
     renderLinks(res.project);
+    const file = state.videoFile;
     els.nameInput.value = '';
     state.video = null;
-    els.videoMeta.replaceChildren(h('span', { class: 'muted' }, '只记录文件名、大小和时长，不上传。选剪辑师发给你的那个文件。'));
+    state.videoFile = null;
+    if (!state.localMode && file) uploadFirstVideo(res, file);
+    els.videoMeta.replaceChildren(h('span', { class: 'muted' }, '选剪辑师发给你的那个文件。创建后会直接上传，你和剪辑师打开链接就能看。'));
     await refresh();
   } catch (err) {
     toast(err.message || '创建失败', 'warn');
@@ -112,6 +118,29 @@ function linkRow(label, url) {
     h('span', { class: 'link-row__label' }, label),
     h('code', { title: url }, url),
     h('button', { class: 'btn btn--sm', type: 'button', onClick: async () => { toast((await copyText(url)) ? `${label}已复制` : '复制失败，请手动选中复制', 'ok'); } }, '复制'));
+}
+
+async function uploadFirstVideo(res, file) {
+  const ownerApi = createRemoteApi({ token: res.project.owner_token });
+  const box = h('div', { class: 'upload-bar', id: 'adminUpload' });
+  els.linksCard.append(box);
+  const render = (loaded, total) => {
+    const pct = total ? Math.round((loaded / total) * 100) : 0;
+    box.replaceChildren(
+      h('div', { class: 'row row--between' }, h('span', {}, `正在上传 V1 视频 · ${pct}%`), h('span', { class: 'mono small' }, `${fmtBytes(loaded)} / ${fmtBytes(total)}`)),
+      h('div', { class: 'progress' }, h('div', { class: 'progress__bar', style: { width: `${pct}%` } })),
+      h('div', { class: 'hint' }, '上传期间请不要关闭页面。'));
+  };
+  state.uploading = true;
+  render(0, file.size);
+  try {
+    await uploadVideo({ api: ownerApi, versionId: res.version.id, file, onProgress: render });
+    box.replaceChildren(h('div', {}, `✓ 视频已上传（${fmtBytes(file.size)}），剪辑师打开链接就能直接看。`));
+    refresh();
+  } catch (e) {
+    box.className = 'banner';
+    box.replaceChildren(`视频上传失败：${e.message || '未知错误'}。打开审片页可以重新上传。`);
+  } finally { state.uploading = false; }
 }
 
 function renderLinks(p) {

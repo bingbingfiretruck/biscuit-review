@@ -118,6 +118,7 @@ await step('21 撤回通过 → collecting', async () => {
 await step('22 editor 发布 V2 → current_version 2，V1 意见保留', async () => {
   const r = await req('POST', '/p/versions', { token: ctx.editor, body: { video: { name: 'v2.mp4', size: 2345, duration: 62 } } });
   eq(r.status, 201, 'status'); eq(r.data.version.number, 2, 'number');
+  ctx.v2 = r.data.version.id;
   const s = await req('GET', '/p', { token: ctx.owner });
   eq(s.data.project.current_version, 2, 'current_version'); eq(s.data.versions[0].feedback.length, 1, 'V1 feedback'); eq(s.data.versions[1].feedback.length, 0, 'V2 feedback');
 });
@@ -137,6 +138,33 @@ await step('23b 5 条并发意见 → seq 1..5 不重复', async () => {
 await step('24 改 fps 25 → 200；31 → 400', async () => {
   const r = await req('PATCH', '/p', { token: ctx.owner, body: { fps: 25 } }); eq(r.status, 200, 'status'); eq(r.data.project.fps, 25, 'fps');
   const b = await req('PATCH', '/p', { token: ctx.owner, body: { fps: 31 } }); eq(b.status, 400, 'status');
+});
+await step('24b 视频上传：start → part → complete', async () => {
+  const bytes = new Uint8Array(1500000); for (let i = 0; i < bytes.length; i += 4096) bytes[i] = i % 251;
+  const st = await req('POST', `/p/versions/${ctx.v2}/upload/start`, { token: ctx.editor, body: { size: bytes.length, mime: 'video/mp4' } });
+  eq(st.status, 200, 'start'); if (!st.data.upload_id) throw new Error('缺 upload_id');
+  const bad = await req('PUT', `/p/versions/${ctx.v2}/upload/part?upload_id=wrong&part=1`, { token: ctx.editor });
+  eq(bad.status, 409, '错误 upload_id');
+  const pr = await fetch(`${BASE}/p/versions/${ctx.v2}/upload/part?upload_id=${encodeURIComponent(st.data.upload_id)}&part=1`, { method: 'PUT', headers: { Authorization: `Bearer ${ctx.editor}`, 'Content-Type': 'application/octet-stream' }, body: bytes });
+  eq(pr.status, 200, 'part'); const part = await pr.json(); if (!part.etag) throw new Error('缺 etag');
+  const done = await req('POST', `/p/versions/${ctx.v2}/upload/complete`, { token: ctx.editor, body: { upload_id: st.data.upload_id, parts: [{ part_number: 1, etag: part.etag }] } });
+  eq(done.status, 200, 'complete'); eq(done.data.version.video_status, 'ready', 'video_status'); eq(done.data.version.video_size, bytes.length, 'video_size');
+  ctx.videoBytes = bytes.length;
+});
+await step('24c 播放：?t= 鉴权 + Range 206 / HEAD / 全量 200', async () => {
+  const r = await fetch(`${BASE}/p/videos/${ctx.v2}?t=${ctx.owner}`, { headers: { Range: 'bytes=0-99' } });
+  eq(r.status, 206, 'range status'); eq(r.headers.get('content-range'), `bytes 0-99/${ctx.videoBytes}`, 'content-range');
+  eq((await r.arrayBuffer()).byteLength, 100, 'range body');
+  const h = await fetch(`${BASE}/p/videos/${ctx.v2}?t=${ctx.editor}`, { method: 'HEAD' });
+  eq(h.status, 200, 'head'); eq(h.headers.get('content-length'), String(ctx.videoBytes), 'head length'); eq(h.headers.get('accept-ranges'), 'bytes', 'accept-ranges');
+  const full = await fetch(`${BASE}/p/videos/${ctx.v2}?t=${ctx.owner}`);
+  eq(full.status, 200, 'full'); eq((await full.arrayBuffer()).byteLength, ctx.videoBytes, 'full body');
+  const noauth = await fetch(`${BASE}/p/videos/${ctx.v2}`); eq(noauth.status, 401, 'no token');
+});
+await step('24d 清理视频：editor 403，owner 200 → none，再播放 404', async () => {
+  const e = await req('DELETE', `/p/versions/${ctx.v2}/video`, { token: ctx.editor }); eq(e.status, 403, 'editor');
+  const o = await req('DELETE', `/p/versions/${ctx.v2}/video`, { token: ctx.owner }); eq(o.status, 200, 'owner'); eq(o.data.version.video_status, 'none', 'status');
+  const g = await fetch(`${BASE}/p/videos/${ctx.v2}?t=${ctx.owner}`); eq(g.status, 404, 'after delete');
 });
 await step('25 管理列表含该项目', async () => {
   const r = await req('GET', '/admin/projects', { admin: ADMIN });

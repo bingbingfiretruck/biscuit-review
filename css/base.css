@@ -133,3 +133,9 @@ textarea.input { min-height: 96px; resize: vertical; line-height: 1.5; }
 .brand__name { font-weight: 800; font-size: var(--fs-lg); letter-spacing: .02em; line-height: 1.2; }
 .brand__sub { color: var(--muted); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar__right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+
+/* 进度条 */
+.progress { height: 8px; border-radius: var(--r-pill); background: var(--line); overflow: hidden; }
+.progress__bar { height: 100%; width: 0; background: var(--pink-strong); transition: width .2s; }
+.upload-bar { display: grid; gap: 6px; padding: 10px 14px; border-radius: var(--r-md); background: var(--pink-soft); color: var(--plum); font-size: var(--fs-sm); font-weight: 600; }

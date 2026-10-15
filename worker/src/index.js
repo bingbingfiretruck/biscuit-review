@@ -17,6 +17,13 @@ const ROUTES = [
   ['POST', /^\/api\/p\/round\/reopen$/, 'project', H.reopenRound],
   ['POST', /^\/api\/p\/approve$/, 'project', H.approve],
   ['POST', /^\/api\/p\/unapprove$/, 'project', H.unapprove],
+  ['POST', /^\/api\/p\/versions\/([^/]+)\/upload\/start$/, 'project', H.uploadStart],
+  ['PUT', /^\/api\/p\/versions\/([^/]+)\/upload\/part$/, 'project', H.uploadPart],
+  ['POST', /^\/api\/p\/versions\/([^/]+)\/upload\/complete$/, 'project', H.uploadComplete],
+  ['POST', /^\/api\/p\/versions\/([^/]+)\/upload\/abort$/, 'project', H.uploadAbort],
+  ['DELETE', /^\/api\/p\/versions\/([^/]+)\/video$/, 'project', H.deleteVideo],
+  ['GET', /^\/api\/p\/videos\/([^/]+)$/, 'project', H.getVideo],
+  ['HEAD', /^\/api\/p\/videos\/([^/]+)$/, 'project', H.getVideo],
 ];
 
 function corsHeaders(request, env) {
@@ -24,8 +31,9 @@ function corsHeaders(request, env) {
   const allowed = String(env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
   const ok = origin && (allowed.includes('*') || allowed.includes(origin));
   const headers = {
-    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Admin-Key',
+    'Access-Control-Allow-Methods': 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Admin-Key, Range',
+    'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, ETag',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
   };
@@ -57,7 +65,8 @@ async function authenticate(ctx, scope) {
     return;
   }
   const auth = request.headers.get('Authorization') || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  // <video src> 发不了请求头，播放视频时允许用 ?t= 带 token
+  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : (new URL(request.url).searchParams.get('t') || '').trim();
   if (!token) throw new ApiError('INVALID_TOKEN', '这个审片链接无效或已失效', 401);
   const project = await env.DB.prepare('SELECT * FROM projects WHERE owner_token = ?1 OR editor_token = ?1').bind(token).first();
   if (!project) throw new ApiError('INVALID_TOKEN', '这个审片链接无效或已失效', 401);
