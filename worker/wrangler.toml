@@ -11,7 +11,7 @@ migrations_dir = "migrations"
 # 视频存储二选一：免费无需绑卡用 KV；以后要 10 GB 可改用 R2（binding = "VIDEOS"）
 [[kv_namespaces]]
 binding = "VIDEO_KV"
-id = "00000000000000000000000000000000"
+id = "b9f1ada8b32d4cf7acfc1ab61b77c553"
 
 [vars]
 ALLOWED_ORIGINS = "https://bingbingfiretruck.github.io,http://localhost:8788,http://127.0.0.1:8788"
