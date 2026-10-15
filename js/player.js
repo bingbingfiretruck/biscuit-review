@@ -46,6 +46,8 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
 
   // ---- 事件 ----
   video.addEventListener('loadedmetadata', () => {
+    // 舞台按视频比例自适应（竖屏视频不再被 16:9 压成一小条，也不会撑到原始高度）
+    if (video.videoWidth && video.videoHeight) stage.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
     durLabel.textContent = fmtTimecode(video.duration, currentFps);
     renderMarkers();
     tick();

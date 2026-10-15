@@ -66,7 +66,8 @@ await step('8b 请求体 null / 文字传对象 / 时间码传字符串 / 非法
   const d = await req('POST', '/p/feedback', { token: ctx.owner, body: { timecode: 1, text: 'x', annotation: '', annotation_thumb: '' } });
   eq(d.status, 201, '空字符串标记视为无标记'); eq(d.data.feedback.has_annotation, false, 'has_annotation');
   ctx.fbTmp = d.data.feedback.id;
-  const e = await req('DELETE', '/p/feedback/%ZZ', { token: ctx.owner }); eq(e.status, 404, '非法编码');
+  const e = await req('DELETE', '/p/feedback/%ZZ', { token: ctx.owner }); // 本地 workerd 404；线上 Cloudflare 边缘直接 400
+  if (![400, 404].includes(e.status)) throw new Error(`非法编码: 期望 400 或 404，实际 ${e.status}`);
   const f = await req('DELETE', `/p/feedback/${ctx.fbTmp}`, { token: ctx.owner }); eq(f.status, 204, '清理临时意见');
 });
 await step('9 editor 写意见 → 403 FORBIDDEN', async () => {
