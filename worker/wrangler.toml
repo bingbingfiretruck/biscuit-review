@@ -1,0 +1,12 @@
+name = "biscuit-review-api"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "biscuit-review"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[vars]
+ALLOWED_ORIGINS = "https://bingbingfiretruck.github.io,http://localhost:8788,http://127.0.0.1:8788"

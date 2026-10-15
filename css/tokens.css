@@ -1,0 +1,103 @@
+/* 布局：顶栏 + 版本栏 + 工作区（视频 1.65fr / 面板 .85fr），≤900px 单列。色板沿用参考站「粉 × 李子」。 */
+:root {
+  color-scheme: light;
+  --pink: #eba3b1;
+  --pink-strong: #df879a;
+  --pink-soft: #fff0f3;
+  --paper: #fffdfc;
+  --cream: #f8f4f3;
+  --line: #eadfe1;
+  --plum: #5b3944;
+  --ink: #241e20;
+  --muted: #786a6e;
+  --card: rgba(255, 253, 252, 0.92);
+  --card-solid: #fffdfc;
+  --field: #ffffff;
+  --player-bg: #292327;
+  --player-fg: #f7edf0;
+  --player-line: rgba(255, 255, 255, 0.12);
+  --marker: #ffd43b;
+  --ok: #3f725f;
+  --ok-soft: #edf8f3;
+  --warn: #9c4545;
+  --warn-soft: #fff4f4;
+  --on-accent: #ffffff;
+  --focus: #df879a;
+  --shadow: 0 8px 24px rgba(91, 57, 68, 0.06);
+  --shadow-lg: 0 18px 50px rgba(72, 45, 55, 0.12);
+  --bg: radial-gradient(circle at 12% 0, rgba(235, 163, 177, 0.2), transparent 28rem),
+        linear-gradient(180deg, #fffafa 0, #f8f4f3 25rem);
+  --sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, -apple-system, sans-serif;
+  --mono: "SF Mono", Menlo, Consolas, "Roboto Mono", monospace;
+  --r-sm: 9px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-pill: 999px;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 15px;
+  --fs-lg: 18px;
+  --fs-xl: 22px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --pink: #e991a5;
+    --pink-strong: #f2a7b6;
+    --pink-soft: #3a2a30;
+    --paper: #292327;
+    --cream: #211d20;
+    --line: #40363b;
+    --plum: #f4c6d0;
+    --ink: #f8eef1;
+    --muted: #bfaeb4;
+    --card: rgba(41, 35, 39, 0.92);
+    --card-solid: #292327;
+    --field: #30282d;
+    --player-bg: #100d0f;
+    --player-fg: #f7edf0;
+    --player-line: rgba(255, 255, 255, 0.14);
+    --marker: #ffd43b;
+    --ok: #9ed7bd;
+    --ok-soft: #1f2f28;
+    --warn: #ffb9c1;
+    --warn-soft: #3a2224;
+    --on-accent: #211d20;
+    --focus: #f2a7b6;
+    --shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    --shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.4);
+    --bg: radial-gradient(circle at 12% 0, rgba(233, 145, 165, 0.16), transparent 28rem),
+          linear-gradient(180deg, #292327 0, #211d20 25rem);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --pink: #e991a5;
+  --pink-strong: #f2a7b6;
+  --pink-soft: #3a2a30;
+  --paper: #292327;
+  --cream: #211d20;
+  --line: #40363b;
+  --plum: #f4c6d0;
+  --ink: #f8eef1;
+  --muted: #bfaeb4;
+  --card: rgba(41, 35, 39, 0.92);
+  --card-solid: #292327;
+  --field: #30282d;
+  --player-bg: #100d0f;
+  --player-fg: #f7edf0;
+  --player-line: rgba(255, 255, 255, 0.14);
+  --marker: #ffd43b;
+  --ok: #9ed7bd;
+  --ok-soft: #1f2f28;
+  --warn: #ffb9c1;
+  --warn-soft: #3a2224;
+  --on-accent: #211d20;
+  --focus: #f2a7b6;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.4);
+  --bg: radial-gradient(circle at 12% 0, rgba(233, 145, 165, 0.16), transparent 28rem),
+        linear-gradient(180deg, #292327 0, #211d20 25rem);
+}

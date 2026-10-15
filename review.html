@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f8f4f3">
+<title>饼干在线审片</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath d='M24 4a20 20 0 1 0 19.6 24.2 7 7 0 0 1-8.4-8.4 7 7 0 0 1-7-7A7 7 0 0 1 24 4z' fill='%23e7b57b' stroke='%23b07a3f' stroke-width='2.5' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='20' r='2.6' fill='%236b3f1f'/%3E%3Ccircle cx='22' cy='31' r='2.6' fill='%236b3f1f'/%3E%3Ccircle cx='32' cy='34' r='2.2' fill='%236b3f1f'/%3E%3Ccircle cx='13' cy='30' r='1.8' fill='%236b3f1f'/%3E%3Ccircle cx='29' cy='24' r='1.8' fill='%236b3f1f'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/tokens.css?v=1">
+<link rel="stylesheet" href="css/base.css?v=1">
+<link rel="stylesheet" href="css/review.css?v=1">
+<script>
+  // 尽早应用已选主题，避免闪烁
+  try { var t = JSON.parse(localStorage.getItem('biscuit.theme')); if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body>
+<div class="shell" id="shell" hidden>
+  <header class="topbar">
+    <a class="brand" href="index.html" title="回到管理台">
+      <span class="brand__logo" aria-hidden="true">
+        <svg viewBox="0 0 48 48"><path d="M24 4a20 20 0 1 0 19.6 24.2 7 7 0 0 1-8.4-8.4 7 7 0 0 1-7-7A7 7 0 0 1 24 4z" fill="#e7b57b" stroke="#b07a3f" stroke-width="2.5" stroke-linejoin="round"/><circle cx="16" cy="20" r="2.6" fill="#6b3f1f"/><circle cx="22" cy="31" r="2.6" fill="#6b3f1f"/><circle cx="32" cy="34" r="2.2" fill="#6b3f1f"/><circle cx="13" cy="30" r="1.8" fill="#6b3f1f"/><circle cx="29" cy="24" r="1.8" fill="#6b3f1f"/></svg>
+      </span>
+      <span class="brand__copy">
+        <span class="brand__name">饼干 · 在线审片</span>
+        <span class="brand__sub" id="projectName">加载中…</span>
+      </span>
+    </a>
+    <div class="topbar__right">
+      <span class="chip chip--mono" id="versionChip">客稿 V—</span>
+      <span class="chip chip--muted" id="roleChip">…</span>
+      <button class="btn btn--ghost btn--sm" id="themeBtn" type="button" aria-label="切换界面主题">黑夜</button>
+    </div>
+  </header>
+
+  <div id="banner" hidden></div>
+
+  <nav class="version-rail" id="versionRail" aria-label="客稿版本">
+    <div class="version-rail__copy">
+      <div class="version-rail__title" id="railTitle">客稿历史版本</div>
+      <div class="hint" id="railHint">当前 · 可继续反馈</div>
+    </div>
+    <div class="version-rail__list" id="versionList" aria-label="历史客稿版本，可左右滑动"></div>
+  </nav>
+
+  <main class="workspace">
+    <section class="video-col">
+      <div id="player"></div>
+      <div id="fileWarn" class="banner" hidden></div>
+    </section>
+    <aside class="panel" id="panel" aria-live="polite"></aside>
+  </main>
+</div>
+
+<div id="gate" class="gate">
+  <div class="gate__box">
+    <div class="gate__icon" aria-hidden="true">…</div>
+    <div class="gate__title" id="gateTitle">正在安全打开审片页面</div>
+    <div class="gate__text" id="gateText">请稍候，不需要登录账号。</div>
+    <div id="gateActions" class="row" style="justify-content:center"></div>
+  </div>
+</div>
+
+<script type="module" src="js/review.js?v=1"></script>
+</body>
+</html>
