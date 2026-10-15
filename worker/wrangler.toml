@@ -8,9 +8,10 @@ database_name = "biscuit-review"
 database_id = "b9d9554b-dcea-4608-bd1b-538e821c0aae"
 migrations_dir = "migrations"
 
-[[r2_buckets]]
-binding = "VIDEOS"
-bucket_name = "biscuit-review-videos"
+# 视频存储二选一：免费无需绑卡用 KV；以后要 10 GB 可改用 R2（binding = "VIDEOS"）
+[[kv_namespaces]]
+binding = "VIDEO_KV"
+id = "00000000000000000000000000000000"
 
 [vars]
 ALLOWED_ORIGINS = "https://bingbingfiretruck.github.io,http://localhost:8788,http://127.0.0.1:8788"

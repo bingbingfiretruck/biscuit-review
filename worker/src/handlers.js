@@ -1,10 +1,9 @@
 import { fail, assert, nowIso, newId, newToken, json, readJson } from './util.js';
+import { getVideoStore, parseRange } from './videostore.js';
 
 const FPS = [24, 25, 30, 50, 60];
 const MAX_IMAGE = 1900000;
 const MAX_ATTACHMENTS = 6;
-const PART_SIZE = 20 * 1024 * 1024;
-const MAX_VIDEO = 2 * 1024 * 1024 * 1024;
 
 // ---------- 形状 ----------
 const publicProject = (p) => ({ id: p.id, name: p.name, fps: p.fps, current_version: p.current_version, created_at: p.created_at, updated_at: p.updated_at });
@@ -80,7 +79,10 @@ export async function adminList({ env }) {
       (SELECT COUNT(*) FROM feedback f WHERE f.version_id = v.id AND f.deleted_at IS NULL) AS feedback_count
     FROM projects p LEFT JOIN versions v ON v.project_id = p.id AND v.number = p.current_version
     ORDER BY p.updated_at DESC`).all()).results;
-  return json({ projects: rows.map((p) => ({ ...publicProject(p), owner_token: p.owner_token, editor_token: p.editor_token, status: p.status || 'collecting', feedback_count: p.feedback_count || 0 })) });
+  const store = getVideoStore(env);
+  const usage = store ? await videoUsage(env) : 0;
+  return json({ projects: rows.map((p) => ({ ...publicProject(p), owner_token: p.owner_token, editor_token: p.editor_token, status: p.status || 'collecting', feedback_count: p.feedback_count || 0 })),
+    storage: store ? { kind: store.kind, used: usage, limit: store.totalLimit } : null });
 }
 
 export async function adminCreate({ env, request }) {
@@ -105,10 +107,8 @@ export async function adminDelete({ env, params }) {
   const id = params[0];
   const p = await env.DB.prepare('SELECT id FROM projects WHERE id = ?').bind(id).first();
   assert(p, 'NOT_FOUND', '找不到这个项目', 404);
-  if (env.VIDEOS) {
-    const listed = await env.VIDEOS.list({ prefix: `${id}/` });
-    if (listed.objects.length) await env.VIDEOS.delete(listed.objects.map((o) => o.key));
-  }
+  const store = getVideoStore(env);
+  if (store) await store.removePrefix(`${id}/`);
   await env.DB.batch([
     env.DB.prepare('DELETE FROM attachments WHERE feedback_id IN (SELECT f.id FROM feedback f JOIN versions v ON v.id = f.version_id WHERE v.project_id = ?)').bind(id),
     env.DB.prepare('DELETE FROM feedback WHERE version_id IN (SELECT id FROM versions WHERE project_id = ?)').bind(id),
@@ -290,44 +290,61 @@ export async function unapprove(ctx) {
     (cur) => ({ status: cur.closed_at ? 'closed' : 'collecting', approved_at: null }));
 }
 
-// ---------- 视频托管（R2） ----------
+// ---------- 视频托管（R2 或 KV，见 videostore.js） ----------
 async function findVersion(ctx, id) {
   const v = await ctx.env.DB.prepare('SELECT * FROM versions WHERE id = ? AND project_id = ?').bind(id, ctx.project.id).first();
   assert(v, 'NOT_FOUND', '找不到这个客稿版本', 404);
   return v;
 }
 const extOf = (mime) => (mime === 'video/quicktime' ? '.mov' : mime === 'video/webm' ? '.webm' : '.mp4');
-const needStorage = (env) => assert(env.VIDEOS, 'NO_STORAGE', '服务器还没有配置视频存储', 503);
+function storeOf(env) { const s = getVideoStore(env); assert(s, 'NO_STORAGE', '服务器还没有配置视频存储', 503); return s; }
+const fmtMB = (n) => `${Math.round(n / 1024 / 1024)} MB`;
 
-async function discardVideo(env, v) {
+async function videoUsage(env) {
+  const row = await env.DB.prepare("SELECT COALESCE(SUM(video_size), 0) AS n FROM versions WHERE video_status IN ('ready', 'uploading') AND video_key IS NOT NULL").first();
+  return row?.n || 0;
+}
+async function discardVideo(store, v) {
   if (!v.video_key) return;
-  if (v.upload_id) { try { await env.VIDEOS.resumeMultipartUpload(v.video_key, v.upload_id).abort(); } catch { /* 可能已失效 */ } }
-  else { try { await env.VIDEOS.delete(v.video_key); } catch { /* 可能已不存在 */ } }
+  if (v.upload_id) await store.abort(v.video_key, v.upload_id);
+  await store.remove(v.video_key);
+}
+const clearVideoSql = (env, id) => env.DB.prepare('UPDATE versions SET video_key = NULL, video_mime = NULL, video_status = ?, upload_id = NULL WHERE id = ?').bind('none', id);
+
+/** 上传完成后只保留最近两版的视频，释放空间 */
+async function pruneOldVideos(env, store, project, keepFrom) {
+  const old = (await env.DB.prepare("SELECT * FROM versions WHERE project_id = ? AND number < ? AND video_status = 'ready' AND video_key IS NOT NULL").bind(project.id, keepFrom).all()).results;
+  for (const v of old) { await discardVideo(store, v); await clearVideoSql(env, v.id).run(); }
+  return old.length;
 }
 
 export async function uploadStart(ctx) {
   const { env, project, params, request } = ctx;
-  needStorage(env);
+  const store = storeOf(env);
   const v = await findVersion(ctx, params[0]);
   const body = await readJson(request);
   const size = Number(body.size);
-  assert(Number.isInteger(size) && size > 0 && size <= MAX_VIDEO, 'BAD_REQUEST', '视频大小不合法（最大 2 GB）');
+  assert(Number.isInteger(size) && size > 0, 'BAD_REQUEST', '视频大小不合法');
+  assert(size <= store.maxVideo, 'BAD_REQUEST', `单个视频最大 ${fmtMB(store.maxVideo)}，请压缩后再传`);
   const mime = String(body.mime || 'video/mp4');
   assert(mime.startsWith('video/') && mime.length <= 64, 'BAD_REQUEST', '只支持视频文件');
-  await discardVideo(env, v);
+  await discardVideo(store, v);
+  await clearVideoSql(env, v.id).run();
+  const used = await videoUsage(env);
+  assert(used + size <= store.totalLimit, 'STORAGE_FULL', `视频空间不够（已用 ${fmtMB(used)} / ${fmtMB(store.totalLimit)}），先在历史版本里清理旧视频`, 507);
   const key = `${project.id}/${v.id}${extOf(mime)}`;
-  const mp = await env.VIDEOS.createMultipartUpload(key, { httpMetadata: { contentType: mime } });
+  const uploadId = await store.createUpload(key, mime);
   await env.DB.batch([
     env.DB.prepare('UPDATE versions SET video_key = ?, video_mime = ?, video_status = ?, upload_id = ?, video_size = ? WHERE id = ?')
-      .bind(key, mime, 'uploading', mp.uploadId, size, v.id),
+      .bind(key, mime, 'uploading', uploadId, size, v.id),
     touch(env, project.id),
   ]);
-  return json({ upload_id: mp.uploadId, part_size: PART_SIZE });
+  return json({ upload_id: uploadId, part_size: store.partSize });
 }
 
 export async function uploadPart(ctx) {
   const { env, params, request } = ctx;
-  needStorage(env);
+  const store = storeOf(env);
   const v = await findVersion(ctx, params[0]);
   const url = new URL(request.url);
   const uploadId = url.searchParams.get('upload_id') || '';
@@ -335,37 +352,37 @@ export async function uploadPart(ctx) {
   assert(v.video_status === 'uploading' && v.upload_id && uploadId === v.upload_id, 'INVALID_STATE', '这个上传已失效，请重新开始', 409);
   assert(Number.isInteger(partNumber) && partNumber >= 1 && partNumber <= 10000, 'BAD_REQUEST', '分片编号不合法');
   const data = await request.arrayBuffer();
-  assert(data.byteLength > 0 && data.byteLength <= PART_SIZE, 'BAD_REQUEST', '分片大小不合法');
-  const part = await env.VIDEOS.resumeMultipartUpload(v.video_key, uploadId).uploadPart(partNumber, data);
-  return json({ part_number: part.partNumber, etag: part.etag });
+  assert(data.byteLength > 0 && data.byteLength <= store.partSize, 'BAD_REQUEST', '分片大小不合法');
+  const etag = await store.uploadPart(v.video_key, uploadId, partNumber, data);
+  return json({ part_number: partNumber, etag });
 }
 
 export async function uploadComplete(ctx) {
   const { env, project, params, request } = ctx;
-  needStorage(env);
+  const store = storeOf(env);
   const v = await findVersion(ctx, params[0]);
   const body = await readJson(request);
   assert(v.video_status === 'uploading' && v.upload_id && body.upload_id === v.upload_id, 'INVALID_STATE', '这个上传已失效，请重新开始', 409);
   assert(Array.isArray(body.parts) && body.parts.length > 0 && body.parts.length <= 10000, 'BAD_REQUEST', '缺少分片信息');
   const parts = body.parts.map((p) => ({ partNumber: Number(p.part_number), etag: String(p.etag) }));
-  const obj = await env.VIDEOS.resumeMultipartUpload(v.video_key, v.upload_id).complete(parts);
+  let size;
+  try { size = await store.complete(v.video_key, v.upload_id, parts, v.video_mime, v.video_size); }
+  catch (e) { await discardVideo(store, v); await clearVideoSql(env, v.id).run(); fail('UPLOAD_FAILED', `上传校验失败：${e.message}`, 400); }
   await env.DB.batch([
-    env.DB.prepare('UPDATE versions SET video_status = ?, upload_id = NULL, video_size = ? WHERE id = ?').bind('ready', obj.size, v.id),
+    env.DB.prepare('UPDATE versions SET video_status = ?, upload_id = NULL, video_size = ? WHERE id = ?').bind('ready', size, v.id),
     touch(env, project.id),
   ]);
-  return json({ version: await loadVersion(env, v.id) });
+  const pruned = await pruneOldVideos(env, store, project, v.number - 1);
+  return json({ version: await loadVersion(env, v.id), pruned });
 }
 
 export async function uploadAbort(ctx) {
   const { env, project, params } = ctx;
-  needStorage(env);
+  const store = storeOf(env);
   const v = await findVersion(ctx, params[0]);
   if (v.video_status === 'uploading') {
-    await discardVideo(env, v);
-    await env.DB.batch([
-      env.DB.prepare('UPDATE versions SET video_key = NULL, video_mime = NULL, video_status = ?, upload_id = NULL WHERE id = ?').bind('none', v.id),
-      touch(env, project.id),
-    ]);
+    await discardVideo(store, v);
+    await env.DB.batch([clearVideoSql(env, v.id), touch(env, project.id)]);
   }
   return json({ version: await loadVersion(env, v.id) });
 }
@@ -373,50 +390,41 @@ export async function uploadAbort(ctx) {
 export async function deleteVideo(ctx) {
   need(ctx, 'owner');
   const { env, project, params } = ctx;
-  needStorage(env);
+  const store = storeOf(env);
   const v = await findVersion(ctx, params[0]);
-  await discardVideo(env, v);
-  await env.DB.batch([
-    env.DB.prepare('UPDATE versions SET video_key = NULL, video_mime = NULL, video_status = ?, upload_id = NULL WHERE id = ?').bind('none', v.id),
-    touch(env, project.id),
-  ]);
+  await discardVideo(store, v);
+  await env.DB.batch([clearVideoSql(env, v.id), touch(env, project.id)]);
   return json({ version: await loadVersion(env, v.id) });
 }
 
-/** 按 Range 转发 R2 里的视频，供 <video src> 直接播放 */
+/** 按 Range 转发存储里的视频，供 <video src> 直接播放 */
 export async function getVideo(ctx) {
   const { env, params, request } = ctx;
-  needStorage(env);
+  const store = storeOf(env);
   const v = await findVersion(ctx, params[0]);
   assert(v.video_status === 'ready' && v.video_key, 'NOT_FOUND', '这一版没有托管视频', 404);
-  const headers = new Headers();
+  const headers = new Headers({ 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=86400' });
+  const head = await store.head(v.video_key);
+  assert(head, 'NOT_FOUND', '视频文件不存在', 404);
+  headers.set('Content-Type', head.mime);
+  headers.set('ETag', head.etag);
   if (request.method === 'HEAD') {
-    const head = await env.VIDEOS.head(v.video_key);
-    assert(head, 'NOT_FOUND', '视频文件不存在', 404);
-    head.writeHttpMetadata(headers);
-    headers.set('Accept-Ranges', 'bytes');
     headers.set('Content-Length', String(head.size));
-    headers.set('ETag', head.httpEtag);
     return new Response(null, { status: 200, headers });
   }
-  const obj = await env.VIDEOS.get(v.video_key, { range: request.headers, onlyIf: request.headers });
-  assert(obj, 'NOT_FOUND', '视频文件不存在', 404);
-  obj.writeHttpMetadata(headers);
-  headers.set('Accept-Ranges', 'bytes');
-  headers.set('ETag', obj.httpEtag);
-  headers.set('Cache-Control', 'private, max-age=86400');
-  if (!obj.body) return new Response(null, { status: 304, headers });
-  let status = 200;
-  if (obj.range && request.headers.has('Range')) {
-    let { offset, length, suffix } = obj.range;
-    if (suffix != null) { length = Math.min(suffix, obj.size); offset = obj.size - length; }
-    if (offset == null) offset = 0;
-    if (length == null) length = obj.size - offset;
-    headers.set('Content-Range', `bytes ${offset}-${offset + length - 1}/${obj.size}`);
-    headers.set('Content-Length', String(length));
-    status = 206;
-  } else {
-    headers.set('Content-Length', String(obj.size));
+  const range = parseRange(request.headers.get('Range'), head.size);
+  if (range === false) {
+    headers.set('Content-Range', `bytes */${head.size}`);
+    return new Response(null, { status: 416, headers });
   }
-  return new Response(obj.body, { status, headers });
+  const want = range || { offset: 0, length: head.size };
+  const res = await store.get(v.video_key, want);
+  assert(res, 'NOT_FOUND', '视频文件不存在', 404);
+  if (res.missing) { headers.set('Retry-After', '10'); fail('VIDEO_SYNCING', '视频正在同步到你附近的节点，稍后自动重试', 503); }
+  headers.set('Content-Length', String(want.length));
+  if (range) {
+    headers.set('Content-Range', `bytes ${want.offset}-${want.offset + want.length - 1}/${head.size}`);
+    return new Response(res.body, { status: 206, headers });
+  }
+  return new Response(res.body, { status: 200, headers });
 }

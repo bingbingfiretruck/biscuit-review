@@ -24,6 +24,5 @@ export async function uploadVideo({ api, versionId, file, onProgress = () => {} 
     done += blob.size;
     onProgress(done, total);
   }
-  const res = await api.uploadComplete(versionId, { upload_id: uploadId, parts });
-  return res.version;
+  return api.uploadComplete(versionId, { upload_id: uploadId, parts });
 }

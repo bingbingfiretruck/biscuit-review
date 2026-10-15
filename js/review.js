@@ -30,7 +30,7 @@ const state = {
   selectedVersion: null, activeFeedbackId: null,
   sort: storage('biscuit.sort', 'timecode'),
   draft: { text: '', whole: false, lockedTimecode: null, annotation: null, attachments: [] },
-  currentTime: 0, loadedFile: null, playerSource: null, uploading: null,
+  currentTime: 0, loadedFile: null, playerSource: null, uploading: null, hostedRetries: 0,
   lastUpdatedAt: null, pollTimer: null, pendingRender: false,
 };
 const cache = { annotations: new Map(), attachments: new Map() };
@@ -57,6 +57,7 @@ async function boot() {
     onTime: (t) => { state.currentTime = t; updateTcDisplay(); },
     onSeekMarker: (id) => setActive(id, { scroll: true }),
     onFileChosen: handleFile,
+    onError: handleHostedError,
   });
   try {
     await loadState({ first: true });
@@ -259,13 +260,28 @@ function handleFile(file) {
   renderAnnoBox();
 }
 
+/** 托管视频加载失败：多半是刚上传、还没同步到附近节点，10 秒后自动重试 */
+function handleHostedError(file) {
+  if (!file || !file.hosted) return false;
+  const v = selected();
+  if (state.hostedRetries >= 8) { toast('托管视频暂时打不开，可以先「用本地文件播放」', 'warn'); return false; }
+  state.hostedRetries++;
+  player.setEmptyText({ title: '视频正在同步', hint: `刚上传的视频需要几十秒同步到你附近的节点，正在自动重试（第 ${state.hostedRetries} 次）…` });
+  player.clear();
+  state.playerSource = null;
+  renderEmptyActions(v, { syncing: true });
+  setTimeout(() => { if (!state.playerSource && selected().id === v.id) syncPlayerSource(); }, 10000);
+  return true;
+}
+
 // ---------- 播放器来源：托管视频 / 本地文件 ----------
 function syncPlayerSource() {
   const v = selected();
   const src = state.playerSource;
   if (!state.uploading && !(src && src.versionId === v.id)) {
     if (v.video_status === 'ready' && !state.api.isLocal) {
-      player.loadUrl(state.api.videoUrl(v.id), { name: v.video_name });
+      if (!src || src.versionId !== v.id) state.hostedRetries = 0;
+      player.loadUrl(state.api.videoUrl(v.id) + (state.hostedRetries ? `&r=${state.hostedRetries}` : ''), { name: v.video_name });
       state.playerSource = { versionId: v.id, kind: 'hosted' };
       state.loadedFile = null;
     } else if (src && src.kind === 'hosted') {
@@ -279,9 +295,11 @@ function syncPlayerSource() {
   renderAnnoBox();
 }
 
-function renderEmptyActions(v) {
+function renderEmptyActions(v, { syncing = false } = {}) {
   const nodes = [];
-  if (state.api.isLocal) {
+  if (syncing) {
+    // 文案已由 handleHostedError 设置
+  } else if (state.api.isLocal) {
     player.setEmptyText({ title: '选择客稿视频', hint: `本地模式：请选择「${v.video_name}」（${fmtBytes(v.video_size)}），视频只在这台设备上播放。` });
   } else if (v.video_status === 'uploading' && !state.uploading) {
     player.setEmptyText({ title: '对方正在上传视频', hint: '上传完成后会自动显示；也可以先用本地文件播放。' });
@@ -304,8 +322,8 @@ async function startUpload(file, v) {
   state.playerSource = { versionId: v.id, kind: 'local' };
   renderUploadBar(v, 0, file.size);
   try {
-    await uploadVideo({ api: state.api, versionId: v.id, file, onProgress: (loaded, total) => renderUploadBar(v, loaded, total) });
-    toast('视频已上传，对方打开链接就能直接看');
+    const res = await uploadVideo({ api: state.api, versionId: v.id, file, onProgress: (loaded, total) => renderUploadBar(v, loaded, total) });
+    toast(res.pruned ? `视频已上传；已自动清理 ${res.pruned} 个更早版本的视频释放空间` : '视频已上传，对方打开链接就能直接看');
   } catch (e) {
     toast(e.message || '上传失败', 'warn');
   } finally {
@@ -321,7 +339,7 @@ function renderUploadBar(v, loaded, total) {
   els.uploadBar.replaceChildren(
     h('div', { class: 'row row--between' }, h('span', {}, `正在上传客稿 V${v.number} 的视频 · ${pct}%`), h('span', { class: 'mono small' }, `${fmtBytes(loaded)} / ${fmtBytes(total)}`)),
     h('div', { class: 'progress' }, h('div', { class: 'progress__bar', style: { width: `${pct}%` } })),
-    h('div', { class: 'hint' }, '上传期间请不要关闭页面。上传完成后对方打开链接即可播放。'));
+    h('div', { class: 'hint' }, '上传期间请不要关闭页面。上传完成后对方打开链接即可播放；系统只保留最近两版的视频。'));
 }
 async function clearVideo(v) {
   const ok = await confirmModal({ title: `清理客稿 V${v.number} 的视频？`, text: '清理后这一版的意见仍可回看，但时间码不再能定位画面。可以释放存储空间。', okText: '清理', danger: true });

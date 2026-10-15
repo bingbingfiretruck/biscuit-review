@@ -51,6 +51,7 @@ async function tryEnter(key) {
     els.keyCard.hidden = true;
     els.app.hidden = false;
     renderProjects(data.projects);
+    renderStorage(data.storage || null);
   } catch (e) {
     if (e.code === 'NETWORK') { showBanner('连不上服务器，先用本地模式。', 'warn'); enterLocal(); return; }
     if (e.code === 'INVALID_ADMIN_KEY') storageSet('biscuit.adminKey', '');
@@ -109,7 +110,7 @@ els.createForm.addEventListener('submit', async (e) => {
 els.refreshBtn.addEventListener('click', refresh);
 
 async function refresh() {
-  try { const data = await state.api.adminList(); renderProjects(data.projects); }
+  try { const data = await state.api.adminList(); renderProjects(data.projects); renderStorage(data.storage || null); }
   catch (e) { toast(e.message || '刷新失败', 'warn'); }
 }
 
@@ -152,6 +153,17 @@ function renderLinks(p) {
     linkRow('剪辑师链接', reviewUrl(p.editor_token)),
     h('div', { class: 'row', style: { justifyContent: 'flex-end' } }, h('a', { class: 'btn btn--primary', href: reviewUrl(p.owner_token) }, '打开审片页')));
   els.linksCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderStorage(storage) {
+  let bar = document.getElementById('storageBar');
+  if (!storage) { bar?.remove(); return; }
+  if (!bar) { bar = h('div', { id: 'storageBar', class: 'stack', style: { gap: '4px' } }); els.projectList.parentElement.insertBefore(bar, els.projectList); }
+  const pct = Math.min(100, Math.round((storage.used / storage.limit) * 100));
+  bar.replaceChildren(
+    h('div', { class: 'row row--between small' }, h('span', { class: 'muted' }, `视频空间 · 已用 ${fmtBytes(storage.used)} / ${fmtBytes(storage.limit)}（${storage.kind === 'kv' ? '免费 KV' : 'R2'}）`), h('span', { class: pct > 85 ? 'chip chip--warn' : 'muted' }, `${pct}%`)),
+    h('div', { class: 'progress' }, h('div', { class: 'progress__bar', style: { width: `${pct}%`, background: pct > 85 ? 'var(--warn)' : '' } })),
+    h('div', { class: 'hint' }, '每个项目只保留最近两版的视频；空间紧张时去审片页的历史版本里清理，或删掉整个旧项目。'));
 }
 
 function renderProjects(list) {

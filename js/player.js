@@ -3,7 +3,7 @@ import { h, fmtTimecode, fmtBytes, pad } from './util.js';
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
-export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker = () => {}, onFileChosen = () => {} } = {}) {
+export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker = () => {}, onFileChosen = () => {}, onError = () => {} } = {}) {
   let currentFps = fps;
   let markers = [];
   let objectUrl = null;
@@ -59,7 +59,13 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
   video.addEventListener('play', () => { playBtn.textContent = '❚❚'; playBtn.setAttribute('aria-label', '暂停'); });
   video.addEventListener('pause', () => { playBtn.textContent = '▶'; playBtn.setAttribute('aria-label', '播放'); });
   video.addEventListener('click', togglePlay);
-  video.addEventListener('error', () => { emptyTitle.textContent = '视频暂时无法播放'; emptyHint.textContent = '当前浏览器不支持这个格式，试试 MP4（H.264）。'; empty.hidden = false; controls.hidden = true; });
+  video.addEventListener('error', () => {
+    if (onError(file) === true) return; // 页面接管（例如托管视频同步中，稍后重试）
+    emptyTitle.textContent = '视频暂时无法播放';
+    emptyHint.textContent = '当前浏览器不支持这个格式，试试 MP4（H.264）。';
+    empty.hidden = false;
+    controls.hidden = true;
+  });
 
   let scrubbing = false;
   range.addEventListener('input', () => { scrubbing = true; const t = (range.value / 1000) * (video.duration || 0); video.currentTime = t; timeLabel.textContent = fmtTimecode(t, currentFps); });
