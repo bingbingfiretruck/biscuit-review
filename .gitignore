@@ -5,3 +5,4 @@ worker/dist/
 codex_result.txt
 .DS_Store
 .tmp/
+worker/.admin-key.txt

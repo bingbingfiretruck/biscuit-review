@@ -5,7 +5,7 @@ compatibility_date = "2025-09-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "biscuit-review"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "b9d9554b-dcea-4608-bd1b-538e821c0aae"
 migrations_dir = "migrations"
 
 [vars]
