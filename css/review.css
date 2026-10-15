@@ -108,8 +108,8 @@ body.theater-open { overflow: hidden; }
 .markup .btn--ghost { color: #f8eef1; border-color: rgba(255, 255, 255, .2); }
 .markup .btn--primary { background: #f2a7b6; color: #211d20; }
 .markup__stage { display: grid; place-items: center; min-height: 0; padding: 12px; overflow: hidden; }
-.markup__frame { position: relative; display: inline-block; line-height: 0; max-width: 100%; max-height: 100%; }
-.markup__canvas { max-width: 100%; max-height: calc(100vh - 150px); width: auto; height: auto; touch-action: none; cursor: crosshair; display: block; }
+.markup__frame { --ar: 1.7778; position: relative; line-height: 0; width: min(100%, calc((100vh - 150px) * var(--ar))); }
+.markup__canvas { width: 100%; height: auto; touch-action: none; cursor: crosshair; display: block; }
 .markup__text { position: absolute; width: min(60%, 320px); transform: translate(0, -50%); line-height: 1.4; }
 .markup__hint { padding: 8px 14px 12px; text-align: center; font-size: var(--fs-xs); color: #bfaeb4; }
 body.markup-open { overflow: hidden; }

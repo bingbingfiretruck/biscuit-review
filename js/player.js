@@ -1,5 +1,5 @@
 // 播放器：本地文件、逐帧、时间码、进度条意见标记、大屏模式。
-import { h, fmtTimecode, pad } from './util.js';
+import { h, fmtTimecode, fmtBytes, pad } from './util.js';
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
@@ -164,9 +164,8 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
   }
 
   function setExpected({ name, size } = {}) {
-    if (name) emptyHint.textContent = `请选择剪辑师发来的「${name}」（${size ? formatSize(size) : ''}）。视频只在这台设备上播放，不会上传。`;
+    if (name) emptyHint.textContent = `请选择剪辑师发来的「${name}」（${size ? fmtBytes(size) : '大小未知'}）。视频只在这台设备上播放，不会上传。`;
   }
-  function formatSize(n) { return n >= 1024 * 1024 * 1024 ? `${(n / 1024 ** 3).toFixed(2)} GB` : `${Math.round(n / 1024 / 1024)} MB`; }
 
   return {
     el: root, video,

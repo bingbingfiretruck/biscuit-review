@@ -67,6 +67,7 @@ async function boot() {
   els.shell.hidden = false;
   if (state.localMode) showBanner('本地模式：没有连接服务器，提交的内容只保存在这台设备，不会同步给对方。', 'info');
   schedulePoll();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { clearTimeout(state.pollTimer); poll(); } });
   window.addEventListener('beforeunload', (e) => { if (hasDraft()) { e.preventDefault(); e.returnValue = ''; } });
 }
 
@@ -251,7 +252,8 @@ function getWriteCard(v) {
   return writeCard;
 }
 function resetDraft() {
-  state.draft = { text: '', whole: state.draft.whole, lockedTimecode: null, annotation: null, attachments: [] };
+  // 原地清空：写意见卡里的事件处理器持有 state.draft 的引用，不能整个换掉
+  Object.assign(state.draft, { text: '', lockedTimecode: null, annotation: null, attachments: [] });
   const ta = writeCard && $('#fbText', writeCard);
   if (ta) ta.value = '';
   renderAnnoBox();

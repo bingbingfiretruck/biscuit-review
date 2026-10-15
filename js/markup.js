@@ -25,6 +25,9 @@ export function openMarkup({ baseCanvas, initialStrokes = [], onDone, onCancel }
   const ctx = canvas.getContext('2d');
   const textInput = h('input', { class: 'markup__text input', type: 'text', placeholder: '输入文字标记，回车放置', hidden: true, 'aria-label': '文字标记输入区' });
 
+  const frame = h('div', { class: 'markup__frame' }, canvas, textInput);
+  frame.style.setProperty('--ar', (W / H).toFixed(4));
+
   const toolBtns = TOOLS.map(([id, label]) => h('button', {
     class: `markup__tool${id === tool ? ' is-active' : ''}`, type: 'button', dataset: { tool: id },
     onClick: () => selectTool(id),
@@ -43,7 +46,7 @@ export function openMarkup({ baseCanvas, initialStrokes = [], onDone, onCancel }
       h('div', { class: 'markup__actions' }, undoBtn, clearBtn,
         h('button', { class: 'btn btn--ghost btn--sm', type: 'button', onClick: cancel }, '取消'),
         h('button', { class: 'btn btn--primary btn--sm', type: 'button', onClick: done }, '完成'))),
-    h('div', { class: 'markup__stage' }, h('div', { class: 'markup__frame', style: { aspectRatio: `${W} / ${H}` } }, canvas, textInput)),
+    h('div', { class: 'markup__stage' }, frame),
     h('div', { class: 'markup__hint' }, '在画面上直接指出问题。文字工具：点一下画面定位，输入后回车。Esc 取消。'));
 
   document.body.append(layer);
@@ -88,6 +91,7 @@ export function openMarkup({ baseCanvas, initialStrokes = [], onDone, onCancel }
     if (!drawing) return;
     try { canvas.releasePointerCapture(e.pointerId); } catch { /* 可能已释放 */ }
     const s = drawing; drawing = null;
+    if (s.tool !== 'pen' && e.clientX != null) s.points[1] = toCanvas(e);
     const [a, b] = [s.points[0], s.points[s.points.length - 1]];
     const tiny = Math.hypot(b[0] - a[0], b[1] - a[1]) < 3 && s.points.length < 4;
     if (!tiny) strokes.push(s);

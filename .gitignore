@@ -4,3 +4,4 @@ worker/.dev.vars
 worker/dist/
 codex_result.txt
 .DS_Store
+.tmp/
