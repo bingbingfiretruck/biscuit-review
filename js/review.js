@@ -74,7 +74,9 @@ async function boot() {
 
 function failGate(e) {
   if (e.code === 'INVALID_TOKEN') {
-    showGate('这个审片链接无效或已失效', state.localMode ? '本地模式只认这台设备上创建的项目。请回到管理台重新创建，或联系饼干要新链接。' : '请向饼干要一条新的审片链接。');
+    showGate('这个审片链接无效或已失效', state.localMode
+      ? '现在是本地模式（后端还没部署）：链接只在生成它的那个浏览器里有效，换一个浏览器或设备就打不开。部署好 Cloudflare 后端后，链接才能发给别人。'
+      : '请向饼干要一条新的审片链接。');
   } else {
     showGate('暂时无法打开这份客稿', e.message || '请稍后再试。', true);
   }
@@ -86,8 +88,8 @@ function showGate(title, text, retry = false) {
   els.gateText.textContent = text;
   $('.gate__icon', els.gate).textContent = '!';
   els.gateActions.replaceChildren(
-    retry && h('button', { class: 'btn btn--primary', type: 'button', onClick: () => location.reload() }, '重新尝试'),
-    h('a', { class: 'btn btn--ghost', href: 'index.html' }, '回到管理台'));
+    ...[retry ? h('button', { class: 'btn btn--primary', type: 'button', onClick: () => location.reload() }, '重新尝试') : null,
+      h('a', { class: 'btn btn--ghost', href: 'index.html' }, '回到管理台')].filter(Boolean));
 }
 
 // ---------- 状态 ----------
