@@ -16,6 +16,7 @@ const state = { api: null, localMode: !API_BASE, adminKey: storage('biscuit.admi
 initTheme();
 updateThemeBtn();
 els.themeBtn.addEventListener('click', () => { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); updateThemeBtn(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateThemeBtn);
 function updateThemeBtn() { els.themeBtn.textContent = currentTheme() === 'dark' ? '日间' : '黑夜'; }
 
 const reviewUrl = (t) => new URL(`review.html?t=${t}`, location.href).href;

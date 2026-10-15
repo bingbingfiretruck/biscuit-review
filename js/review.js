@@ -40,6 +40,7 @@ let tcDisplay = null;
 initTheme();
 updateThemeBtn();
 els.themeBtn.addEventListener('click', () => { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); updateThemeBtn(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateThemeBtn);
 els.panel.addEventListener('focusout', () => { if (state.pendingRender) setTimeout(() => { if (state.pendingRender && !isTypingInList()) { state.pendingRender = false; renderAll(); } }, 80); });
 
 if (!token) showGate('这个审片链接无效', '链接里缺少凭证，请向饼干要一条新的审片链接。');
