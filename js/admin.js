@@ -51,10 +51,10 @@ async function tryEnter(key) {
     renderProjects(data.projects);
   } catch (e) {
     if (e.code === 'NETWORK') { showBanner('连不上服务器，先用本地模式。', 'warn'); enterLocal(); return; }
-    storageSet('biscuit.adminKey', '');
+    if (e.code === 'INVALID_ADMIN_KEY') storageSet('biscuit.adminKey', '');
     els.keyCard.hidden = false;
     els.keyInput.focus();
-    toast(e.code === 'INVALID_ADMIN_KEY' ? '管理口令不对' : e.message, 'warn');
+    toast(e.code === 'INVALID_ADMIN_KEY' ? '管理口令不对' : `管理接口出错：${e.message}`, 'warn');
   }
 }
 

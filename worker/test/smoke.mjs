@@ -58,6 +58,17 @@ await step('7 owner 写意见（整片 + 附件）→ 201 seq 2', async () => {
 await step('8 三项全空 → 400', async () => {
   const r = await req('POST', '/p/feedback', { token: ctx.owner, body: { timecode: 1, text: '' } }); eq(r.status, 400, 'status');
 });
+await step('8b 请求体 null / 文字传对象 / 时间码传字符串 / 非法编码 → 400 或 404', async () => {
+  const a = await fetch(BASE + '/admin/projects', { method: 'POST', headers: { 'X-Admin-Key': ADMIN, 'Content-Type': 'application/json' }, body: 'null' });
+  eq(a.status, 400, 'null body');
+  const b = await req('POST', '/p/feedback', { token: ctx.owner, body: { timecode: 1, text: { x: 1 } } }); eq(b.status, 400, 'text 对象');
+  const c = await req('POST', '/p/feedback', { token: ctx.owner, body: { timecode: '', text: 'x' } }); eq(c.status, 400, 'timecode 空串');
+  const d = await req('POST', '/p/feedback', { token: ctx.owner, body: { timecode: 1, text: 'x', annotation: '', annotation_thumb: '' } });
+  eq(d.status, 201, '空字符串标记视为无标记'); eq(d.data.feedback.has_annotation, false, 'has_annotation');
+  ctx.fbTmp = d.data.feedback.id;
+  const e = await req('DELETE', '/p/feedback/%ZZ', { token: ctx.owner }); eq(e.status, 404, '非法编码');
+  const f = await req('DELETE', `/p/feedback/${ctx.fbTmp}`, { token: ctx.owner }); eq(f.status, 204, '清理临时意见');
+});
 await step('9 editor 写意见 → 403 FORBIDDEN', async () => {
   const r = await req('POST', '/p/feedback', { token: ctx.editor, body: { timecode: 1, text: 'x' } }); eq(r.status, 403, 'status'); eq(r.data.code, 'FORBIDDEN', 'code');
 });
@@ -91,6 +102,9 @@ await step('18 删除第二条 → 204，列表剩 1 条', async () => {
   const r = await req('DELETE', `/p/feedback/${ctx.fb2}`, { token: ctx.owner }); eq(r.status, 204, 'status');
   const s = await req('GET', '/p', { token: ctx.owner }); eq(s.data.versions[0].feedback.length, 1, 'feedback 数');
 });
+await step('18b 已删意见的附件 → 404', async () => {
+  const r = await req('GET', `/p/attachments/${ctx.att}`, { token: ctx.owner }); eq(r.status, 404, 'status');
+});
 await step('19 确认通过 → approved', async () => {
   const r = await req('POST', '/p/approve', { token: ctx.owner }); eq(r.status, 200, 'status'); eq(r.data.version.status, 'approved', 'status');
 });
@@ -106,8 +120,18 @@ await step('22 editor 发布 V2 → current_version 2，V1 意见保留', async 
   const s = await req('GET', '/p', { token: ctx.owner });
   eq(s.data.project.current_version, 2, 'current_version'); eq(s.data.versions[0].feedback.length, 1, 'V1 feedback'); eq(s.data.versions[1].feedback.length, 0, 'V2 feedback');
 });
+await step('22b 历史版本只读：删 / 改 V1 意见 → 409 VERSION_LOCKED', async () => {
+  const d = await req('DELETE', `/p/feedback/${ctx.fb1}`, { token: ctx.owner }); eq(d.status, 409, 'delete'); eq(d.data.code, 'VERSION_LOCKED', 'code');
+  const p = await req('PATCH', `/p/feedback/${ctx.fb1}`, { token: ctx.editor, body: { status: 'open' } }); eq(p.status, 409, 'patch'); eq(p.data.code, 'VERSION_LOCKED', 'code');
+});
 await step('23 V2 无意见时结束本轮 → 409 NO_FEEDBACK', async () => {
   const r = await req('POST', '/p/round/close', { token: ctx.owner }); eq(r.status, 409, 'status'); eq(r.data.code, 'NO_FEEDBACK', 'code');
+});
+await step('23b 5 条并发意见 → seq 1..5 不重复', async () => {
+  const rs = await Promise.all([1, 2, 3, 4, 5].map((i) => req('POST', '/p/feedback', { token: ctx.owner, body: { timecode: i, text: `并发 ${i}` } })));
+  for (const r of rs) eq(r.status, 201, 'status');
+  const seqs = rs.map((r) => r.data.feedback.seq).sort((a, b) => a - b);
+  eq(JSON.stringify(seqs), '[1,2,3,4,5]', 'seqs');
 });
 await step('24 改 fps 25 → 200；31 → 400', async () => {
   const r = await req('PATCH', '/p', { token: ctx.owner, body: { fps: 25 } }); eq(r.status, 200, 'status'); eq(r.data.project.fps, 25, 'fps');
@@ -117,13 +141,20 @@ await step('25 管理列表含该项目', async () => {
   const r = await req('GET', '/admin/projects', { admin: ADMIN });
   const p = r.data.projects.find((x) => x.id === ctx.id);
   if (!p) throw new Error('列表里没有该项目');
-  eq(p.current_version, 2, 'current_version'); eq(p.status, 'collecting', 'status'); eq(p.feedback_count, 0, 'feedback_count');
+  eq(p.current_version, 2, 'current_version'); eq(p.status, 'collecting', 'status'); eq(p.feedback_count, 5, 'feedback_count');
 });
 await step('26 CORS：允许的 Origin 回显；未知 Origin 不回显', async () => {
   const ok = await req('GET', '/p', { token: ctx.owner, origin: 'http://localhost:8788' });
   eq(ok.headers.get('access-control-allow-origin'), 'http://localhost:8788', 'allow-origin');
   const bad = await req('GET', '/p', { token: ctx.owner, origin: 'https://evil.example' });
   eq(bad.headers.get('access-control-allow-origin'), null, 'allow-origin(evil)');
+});
+await step('26b 3 个并发发布新版 → 无 500，版本号唯一', async () => {
+  const rs = await Promise.all([3, 4, 5].map((i) => req('POST', '/p/versions', { token: ctx.editor, body: { video: { name: `v${i}.mp4`, size: 100 + i, duration: 1 } } })));
+  for (const r of rs) if (![201, 409].includes(r.status)) throw new Error(`状态 ${r.status}`);
+  const s = await req('GET', '/p', { token: ctx.owner });
+  const nums = s.data.versions.map((v) => v.number);
+  eq(new Set(nums).size, nums.length, '版本号唯一'); eq(s.data.project.current_version, Math.max(...nums), 'current = max');
 });
 await step('27 删除项目 → 204；owner token 失效', async () => {
   const r = await req('DELETE', `/admin/projects/${ctx.id}`, { admin: ADMIN }); eq(r.status, 204, 'status');

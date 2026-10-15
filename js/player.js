@@ -153,14 +153,17 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
     return c;
   }
 
+  const onTheaterKey = (e) => {
+    if (e.key !== 'Escape') return;
+    if (document.querySelector('.modal-backdrop, .markup')) return; // 弹层/标记层自己处理 Esc
+    setTheater(false);
+  };
   function setTheater(on) {
     root.classList.toggle('player--theater', on);
     document.body.classList.toggle('theater-open', on);
     theaterBtn.textContent = on ? '退出大屏' : '大屏';
-    if (on) {
-      const onKey = (e) => { if (e.key === 'Escape') { setTheater(false); document.removeEventListener('keydown', onKey); } };
-      document.addEventListener('keydown', onKey);
-    }
+    document.removeEventListener('keydown', onTheaterKey);
+    if (on) document.addEventListener('keydown', onTheaterKey);
   }
 
   function setExpected({ name, size } = {}) {

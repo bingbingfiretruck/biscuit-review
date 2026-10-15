@@ -7,7 +7,10 @@ const now = () => new Date().toISOString();
 const FPS = [24, 25, 30, 50, 60];
 
 function load() { try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch { return []; } }
-function save(list) { localStorage.setItem(KEY, JSON.stringify(list)); }
+function save(list) {
+  try { localStorage.setItem(KEY, JSON.stringify(list)); }
+  catch { fail('STORAGE_FULL', '本地模式的浏览器存储已满，删掉一些带图片的意见再试', 507); }
+}
 function fail(code, message, status) { throw new ApiError(code, message, status); }
 
 function publicFeedback(f) {
@@ -33,8 +36,8 @@ function validateVideo(video) {
   if (!name || name.length > 255) fail('BAD_REQUEST', '视频文件名不合法', 400);
   const size = Number(video.size);
   if (!Number.isInteger(size) || size <= 0) fail('BAD_REQUEST', '视频大小不合法', 400);
-  const duration = Number(video.duration) || 0;
-  if (duration < 0) fail('BAD_REQUEST', '视频时长不合法', 400);
+  const duration = Number(video.duration ?? 0);
+  if (!Number.isFinite(duration) || duration < 0) fail('BAD_REQUEST', '视频时长不合法', 400);
   return { name, size, duration };
 }
 
@@ -97,24 +100,24 @@ export function createLocalApi({ token = '' } = {}) {
       need(role, 'owner');
       const cur = currentVersion(p);
       if (cur.status !== 'collecting') fail('ROUND_CLOSED', '本轮反馈已结束，撤回后才能继续写意见', 409);
+      if (body?.text != null && typeof body.text !== 'string') fail('BAD_REQUEST', '意见文字必须是文字', 400);
       const text = String(body?.text || '').trim();
-      const annotation = body?.annotation || null;
-      const thumb = body?.annotation_thumb || null;
+      const annotation = typeof body?.annotation === 'string' && body.annotation ? body.annotation : null;
+      const thumb = typeof body?.annotation_thumb === 'string' && body.annotation_thumb ? body.annotation_thumb : null;
       const attachments = Array.isArray(body?.attachments) ? body.attachments : [];
       if (text.length > 5000) fail('BAD_REQUEST', '意见文字不能超过 5000 字', 400);
       if (!!annotation !== !!thumb) fail('BAD_REQUEST', '标记大图与缩略图要一起提供', 400);
-      if (annotation && (!annotation.startsWith('data:image/') || annotation.length > 1900000)) fail('BAD_REQUEST', '标记图片不合法或过大', 400);
+      const okImg = (s) => s.startsWith('data:image/') && s.length <= 1900000;
+      if (annotation && !(okImg(annotation) && okImg(thumb))) fail('BAD_REQUEST', '标记图片不合法或过大', 400);
       if (attachments.length > 6) fail('BAD_REQUEST', '附件最多 6 张', 400);
       for (const a of attachments) {
         if (!a?.data?.startsWith?.('data:image/') || a.data.length > 1900000) fail('BAD_REQUEST', '附件不合法或过大', 400);
         if (!String(a.mime || '').startsWith('image/')) fail('BAD_REQUEST', '附件只支持图片', 400);
+        if (String(a.name ?? '').length > 255) fail('BAD_REQUEST', '附件名太长', 400);
       }
       if (!text && !annotation && attachments.length === 0) fail('BAD_REQUEST', '意见不能为空', 400);
-      let timecode = body?.timecode;
-      if (timecode != null) {
-        timecode = Number(timecode);
-        if (!isFinite(timecode) || timecode < 0) fail('BAD_REQUEST', '时间码不合法', 400);
-      } else timecode = null;
+      let timecode = body?.timecode ?? null;
+      if (timecode != null && !(typeof timecode === 'number' && isFinite(timecode) && timecode >= 0)) fail('BAD_REQUEST', '时间码不合法', 400);
       const seq = Math.max(0, ...cur.feedback.map((f) => f.seq)) + 1;
       const t = now();
       const f = { id: uid(), seq, timecode, text, annotation, annotation_thumb: thumb, status: 'open', editor_note: '',
@@ -127,6 +130,7 @@ export function createLocalApi({ token = '' } = {}) {
     deleteFeedback: (id) => mutate((p, role) => {
       need(role, 'owner');
       const { v, f } = findFeedback(p, id);
+      if (v.number !== p.current_version) fail('VERSION_LOCKED', '历史版本只读，不能改动', 409);
       if (v.status === 'approved') fail('VERSION_APPROVED', '这一版已确认通过，不能再删意见', 409);
       f.deleted_at = now();
       return null;
@@ -134,13 +138,16 @@ export function createLocalApi({ token = '' } = {}) {
 
     patchFeedback: (id, body) => mutate((p, role) => {
       need(role, 'editor');
-      const { f } = findFeedback(p, id);
+      const { v, f } = findFeedback(p, id);
+      if (v.number !== p.current_version) fail('VERSION_LOCKED', '历史版本只读，不能改动', 409);
+      if (body?.status == null && body?.editor_note == null) fail('BAD_REQUEST', '没有可修改的内容', 400);
       if (body?.status != null) {
         if (!['open', 'done'].includes(body.status)) fail('BAD_REQUEST', '状态不合法', 400);
         f.status = body.status;
       }
       if (body?.editor_note != null) {
-        const note = String(body.editor_note);
+        if (typeof body.editor_note !== 'string') fail('BAD_REQUEST', '修改说明必须是文字', 400);
+        const note = body.editor_note;
         if (note.length > 2000) fail('BAD_REQUEST', '修改说明不能超过 2000 字', 400);
         f.editor_note = note;
       }

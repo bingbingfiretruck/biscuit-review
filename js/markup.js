@@ -76,19 +76,20 @@ export function openMarkup({ baseCanvas, initialStrokes = [], onDone, onCancel }
     e.preventDefault();
     const [x, y] = toCanvas(e);
     if (tool === 'text') { showText(x, y); return; }
+    if (drawing) return; // 已有一根手指在画
     canvas.setPointerCapture(e.pointerId);
-    drawing = { tool, color, points: [[x, y]] };
+    drawing = { tool, color, pointerId: e.pointerId, points: [[x, y]] };
     if (tool !== 'pen') drawing.points.push([x, y]);
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (!drawing) return;
+    if (!drawing || e.pointerId !== drawing.pointerId) return;
     const [x, y] = toCanvas(e);
     if (drawing.tool === 'pen') drawing.points.push([x, y]);
     else drawing.points[1] = [x, y];
     redraw();
   });
   const finish = (e) => {
-    if (!drawing) return;
+    if (!drawing || e.pointerId !== drawing.pointerId) return;
     try { canvas.releasePointerCapture(e.pointerId); } catch { /* 可能已释放 */ }
     const s = drawing; drawing = null;
     if (s.tool !== 'pen' && e.clientX != null) s.points[1] = toCanvas(e);
@@ -173,7 +174,7 @@ export function openMarkup({ baseCanvas, initialStrokes = [], onDone, onCancel }
 
   // ---- 完成 / 取消 ----
   function close() {
-    document.removeEventListener('keydown', onKey);
+    document.removeEventListener('keydown', onKey, true);
     document.body.classList.remove('markup-open');
     layer.remove();
   }
@@ -186,6 +187,6 @@ export function openMarkup({ baseCanvas, initialStrokes = [], onDone, onCancel }
     onDone?.({ full, thumb, strokes });
   }
   function cancel() { close(); onCancel?.(); }
-  const onKey = (e) => { if (e.key === 'Escape' && textInput.hidden) cancel(); };
-  document.addEventListener('keydown', onKey);
+  const onKey = (e) => { if (e.key === 'Escape' && textInput.hidden) { e.stopImmediatePropagation(); cancel(); } };
+  document.addEventListener('keydown', onKey, true);
 }

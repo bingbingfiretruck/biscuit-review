@@ -94,14 +94,22 @@ function showGate(title, text, retry = false) {
 async function loadState({ first = false } = {}) {
   const data = await state.api.getState();
   const changed = first || data.project.updated_at !== state.lastUpdatedAt;
+  const prevCurrent = state.project?.current_version;
+  const prevFps = state.project?.fps;
   state.role = data.role;
   state.project = data.project;
   state.versions = data.versions;
   state.lastUpdatedAt = data.project.updated_at;
   if (state.selectedVersion == null || !state.versions.some((v) => v.number === state.selectedVersion)) {
     state.selectedVersion = data.project.current_version;
+  } else if (prevCurrent != null && prevCurrent !== data.project.current_version && state.selectedVersion === prevCurrent) {
+    // 对方发布了新版：跟到新版，草稿原样带过去
+    state.selectedVersion = data.project.current_version;
+    state.activeFeedbackId = null;
+    writeCardKey = '';
+    toast(hasDraft() ? `客稿 V${data.project.current_version} 已发布，你没提交的草稿已带到新版` : `客稿 V${data.project.current_version} 已发布`);
   }
-  if (first) player.setFps(data.project.fps);
+  if (first || prevFps !== data.project.fps) player.setFps(data.project.fps);
   if (!changed) return;
   if (!first && isTypingInList()) { state.pendingRender = true; return; }
   renderAll();
@@ -126,6 +134,7 @@ async function poll() {
       if (state.connLost) { state.connLost = false; hideBanner(); }
     } catch (e) {
       if (e.code === 'NETWORK' && !state.localMode) { state.connLost = true; showBanner('暂时连不上服务器，正在重试…', 'warn'); }
+      if (e.code === 'INVALID_TOKEN') { clearTimeout(state.pollTimer); failGate(e); return; }
     }
   }
   schedulePoll();

@@ -102,8 +102,11 @@ AttachmentMeta { id, name, mime, size }   // size = data URL 字符串长度
 规则与错误码：
 - 角色不符 → 403 `FORBIDDEN`。
 - 写意见要求当前版本 status 为 `collecting`，否则 409 `ROUND_CLOSED`。
-- 删意见：当前版本为 `approved` 时 409 `VERSION_APPROVED`；意见不属于该项目 → 404。
-- 剪辑师 PATCH：status 只能是 `open`/`done`；editor_note ≤ 2000 字；可在任何版本状态下操作。
+- 删意见：当前版本为 `approved` 时 409 `VERSION_APPROVED`；意见不属于该项目 → 404；已删意见的附件与标记按 404 处理。
+- 剪辑师 PATCH：status 只能是 `open`/`done`；editor_note ≤ 2000 字；status 与 editor_note 至少给一个，否则 400。
+- 历史版本只读：删除或 PATCH 不属于当前版本的意见 → 409 `VERSION_LOCKED`（2026-10-15 审查后补充）。
+- 并发：意见 seq 与版本 number 在 INSERT 内用子查询计算，并有唯一索引；撞上唯一约束时返回 409 `CONFLICT`。
+- 类型：text / editor_note 必须是字符串，timecode 必须是数字或 null，annotation 为空字符串视为无标记；否则 400。
 - 状态机不匹配（如对 `approved` 版本 close）→ 409 `INVALID_STATE`。
 - `round/close` 要求当前版本至少 1 条未删除意见，否则 409 `NO_FEEDBACK`。
 - 写意见校验：text ≤ 5000 字；text、annotation、attachments 至少一项非空；annotation 与 annotation_thumb 必须同时给或同时不给，都是 `data:image/` 开头；annotation ≤ 1,900,000 字符；attachments ≤ 6 个，每个 data ≤ 1,900,000 字符，mime 以 `image/` 开头，name ≤ 255 字；timecode 为 null 或 ≥0 的有限数。

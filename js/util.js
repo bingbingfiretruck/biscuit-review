@@ -140,8 +140,8 @@ export function toast(msg, kind = '') {
 /** 自定义确认弹层，resolve(true/false) */
 export function confirmModal({ title, text = '', okText = '确定', cancelText = '取消', danger = false }) {
   return new Promise((resolve) => {
-    const onKey = (e) => { if (e.key === 'Escape') close(false); };
-    const close = (v) => { document.removeEventListener('keydown', onKey); backdrop.remove(); resolve(v); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close(false); } };
+    const close = (v) => { document.removeEventListener('keydown', onKey, true); backdrop.remove(); resolve(v); };
     const backdrop = h('div', { class: 'modal-backdrop', onClick: (e) => { if (e.target === backdrop) close(false); } },
       h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' },
         h('div', { class: 'modal__title' }, title),
@@ -150,15 +150,15 @@ export function confirmModal({ title, text = '', okText = '确定', cancelText =
           h('button', { class: 'btn btn--ghost', type: 'button', onClick: () => close(false) }, cancelText),
           h('button', { class: `btn ${danger ? 'btn--danger' : 'btn--primary'}`, type: 'button', onClick: () => close(true) }, okText))));
     document.body.append(backdrop);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
     backdrop.querySelector('.btn--primary, .btn--danger')?.focus();
   });
 }
 
 /** 大图弹层 */
 export function imageModal(src, caption = '') {
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
-  const close = () => { document.removeEventListener('keydown', onKey); backdrop.remove(); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close(); } };
+  const close = () => { document.removeEventListener('keydown', onKey, true); backdrop.remove(); };
   const backdrop = h('div', { class: 'modal-backdrop', onClick: (e) => { if (e.target === backdrop) close(); } },
     h('div', { class: 'modal modal--wide', role: 'dialog', 'aria-modal': 'true' },
       h('img', { src, alt: caption, style: { maxHeight: '78vh', margin: '0 auto', objectFit: 'contain', borderRadius: '10px' } }),
@@ -166,7 +166,7 @@ export function imageModal(src, caption = '') {
         caption && h('span', { class: 'muted small' }, caption),
         h('button', { class: 'btn btn--ghost', type: 'button', onClick: close }, '关闭'))));
   document.body.append(backdrop);
-  document.addEventListener('keydown', onKey);
+  document.addEventListener('keydown', onKey, true);
 }
 
 export async function copyText(text) {

@@ -40,7 +40,10 @@ function match(request, pathname) {
     if (!m) continue;
     pathMatched = true;
     if (method !== request.method) continue;
-    return { scope, handler, params: m.slice(1).map(decodeURIComponent) };
+    let params;
+    try { params = m.slice(1).map(decodeURIComponent); }
+    catch { throw new ApiError('NOT_FOUND', '没有这个接口', 404); }
+    return { scope, handler, params };
   }
   if (pathMatched) throw new ApiError('METHOD_NOT_ALLOWED', '不支持这个方法', 405);
   throw new ApiError('NOT_FOUND', '没有这个接口', 404);
@@ -77,6 +80,7 @@ export default {
       return res;
     } catch (e) {
       if (e instanceof ApiError) return json({ error: e.message, code: e.code }, e.status, cors);
+      if (/UNIQUE constraint failed/i.test(String(e && e.message))) return json({ error: '和另一次操作撞上了，请刷新后重试', code: 'CONFLICT' }, 409, cors);
       console.error('INTERNAL', (e && e.stack) || e);
       return json({ error: '服务器开小差了', code: 'INTERNAL' }, 500, cors);
     }

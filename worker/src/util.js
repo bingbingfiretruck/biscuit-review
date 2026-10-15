@@ -27,5 +27,8 @@ export async function readJson(request, maxBytes = 8 * 1024 * 1024) {
   const text = await request.text();
   if (text.length > maxBytes) fail('PAYLOAD_TOO_LARGE', '请求内容太大', 413);
   if (!text.trim()) return {};
-  try { return JSON.parse(text); } catch { fail('BAD_JSON', '请求格式不正确', 400); }
+  let data;
+  try { data = JSON.parse(text); } catch { fail('BAD_JSON', '请求格式不正确', 400); }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) fail('BAD_JSON', '请求格式不正确', 400);
+  return data;
 }

@@ -37,6 +37,13 @@ function validateFps(v, fallback = 30) {
   return fps;
 }
 const isImageData = (s) => typeof s === 'string' && s.startsWith('data:image/') && s.length <= MAX_IMAGE;
+const strOrNull = (v) => (typeof v === 'string' && v ? v : null);
+function optionalString(v, what, max) {
+  if (v == null) return null;
+  assert(typeof v === 'string', 'BAD_REQUEST', `${what}必须是文字`);
+  assert(v.length <= max, 'BAD_REQUEST', `${what}不能超过 ${max} 字`);
+  return v;
+}
 
 // ---------- 查询助手 ----------
 const touch = (env, projectId, t = nowIso()) => env.DB.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').bind(t, projectId);
@@ -53,7 +60,7 @@ async function loadVersion(env, versionId) {
   return publicVersion(v, fb.map((f) => publicFeedback(f, atts.filter((a) => a.feedback_id === f.id).map(attachmentMeta))));
 }
 async function findFeedback(ctx, id) {
-  const f = await ctx.env.DB.prepare(`SELECT ${FEEDBACK_COLS}, v.status AS version_status FROM feedback f JOIN versions v ON v.id = f.version_id WHERE f.id = ? AND v.project_id = ? AND f.deleted_at IS NULL`).bind(id, ctx.project.id).first();
+  const f = await ctx.env.DB.prepare(`SELECT ${FEEDBACK_COLS}, v.status AS version_status, v.number AS version_number FROM feedback f JOIN versions v ON v.id = f.version_id WHERE f.id = ? AND v.project_id = ? AND f.deleted_at IS NULL`).bind(id, ctx.project.id).first();
   assert(f, 'NOT_FOUND', '找不到这条意见', 404);
   return f;
 }
@@ -130,15 +137,14 @@ export async function patchProject(ctx) {
 export async function createVersion(ctx) {
   const { env, project, request } = ctx;
   const video = validateVideo((await readJson(request)).video);
-  const row = await env.DB.prepare('SELECT MAX(number) AS n FROM versions WHERE project_id = ?').bind(project.id).first();
-  const number = (row?.n || 0) + 1;
   const t = nowIso();
-  const version = { id: newId(), number, video_name: video.name, video_size: video.size, video_duration: video.duration, status: 'collecting', closed_at: null, approved_at: null, created_at: t };
+  const id = newId();
   await env.DB.batch([
-    env.DB.prepare('INSERT INTO versions (id, project_id, number, video_name, video_size, video_duration, status, created_at) VALUES (?,?,?,?,?,?,?,?)')
-      .bind(version.id, project.id, number, video.name, video.size, video.duration, 'collecting', t),
-    env.DB.prepare('UPDATE projects SET current_version = ?, updated_at = ? WHERE id = ?').bind(number, t, project.id),
+    env.DB.prepare('INSERT INTO versions (id, project_id, number, video_name, video_size, video_duration, status, created_at) VALUES (?1, ?2, COALESCE((SELECT MAX(number) FROM versions WHERE project_id = ?2), 0) + 1, ?3, ?4, ?5, ?6, ?7)')
+      .bind(id, project.id, video.name, video.size, video.duration, 'collecting', t),
+    env.DB.prepare('UPDATE projects SET current_version = (SELECT number FROM versions WHERE id = ?1), updated_at = ?2 WHERE id = ?3').bind(id, t, project.id),
   ]);
+  const version = await env.DB.prepare('SELECT * FROM versions WHERE id = ?').bind(id).first();
   return json({ version: publicVersion(version) }, 201);
 }
 
@@ -148,10 +154,9 @@ export async function createFeedback(ctx) {
   const cur = await currentVersion(ctx);
   assert(cur.status === 'collecting', 'ROUND_CLOSED', '本轮反馈已结束，撤回后才能继续写意见', 409);
   const body = await readJson(request);
-  const text = String(body.text ?? '').trim();
-  assert(text.length <= 5000, 'BAD_REQUEST', '意见文字不能超过 5000 字');
-  const annotation = body.annotation ?? null;
-  const thumb = body.annotation_thumb ?? null;
+  const text = (optionalString(body.text, '意见文字', 5000) || '').trim();
+  const annotation = strOrNull(body.annotation);
+  const thumb = strOrNull(body.annotation_thumb);
   assert(!!annotation === !!thumb, 'BAD_REQUEST', '标记大图与缩略图要一起提供');
   if (annotation) assert(isImageData(annotation) && isImageData(thumb), 'BAD_REQUEST', '标记图片不合法或过大');
   const attachments = Array.isArray(body.attachments) ? body.attachments : [];
@@ -164,20 +169,18 @@ export async function createFeedback(ctx) {
   assert(text || annotation || attachments.length, 'BAD_REQUEST', '意见不能为空');
   let timecode = body.timecode ?? null;
   if (timecode != null) {
-    timecode = Number(timecode);
-    assert(Number.isFinite(timecode) && timecode >= 0, 'BAD_REQUEST', '时间码不合法');
+    assert(typeof timecode === 'number' && Number.isFinite(timecode) && timecode >= 0, 'BAD_REQUEST', '时间码不合法');
   }
-  const seqRow = await env.DB.prepare('SELECT MAX(seq) AS n FROM feedback WHERE version_id = ?').bind(cur.id).first();
-  const seq = (seqRow?.n || 0) + 1;
   const t = nowIso();
-  const f = { id: newId(), seq, timecode, text, annotation_thumb: thumb, has_annotation: !!annotation, status: 'open', editor_note: '', created_at: t, updated_at: t };
+  const f = { id: newId(), seq: 0, timecode, text, annotation_thumb: thumb, has_annotation: !!annotation, status: 'open', editor_note: '', created_at: t, updated_at: t };
   const attRows = attachments.map((a) => ({ id: newId(), name: String(a.name || '图片').slice(0, 255), mime: String(a.mime), data: a.data, size: a.data.length }));
   await env.DB.batch([
-    env.DB.prepare('INSERT INTO feedback (id, version_id, seq, timecode, text, annotation, annotation_thumb, status, editor_note, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-      .bind(f.id, cur.id, seq, timecode, text, annotation, thumb, 'open', '', t, t),
+    env.DB.prepare('INSERT INTO feedback (id, version_id, seq, timecode, text, annotation, annotation_thumb, status, editor_note, created_at, updated_at) VALUES (?1, ?2, COALESCE((SELECT MAX(seq) FROM feedback WHERE version_id = ?2), 0) + 1, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)')
+      .bind(f.id, cur.id, timecode, text, annotation, thumb, 'open', '', t),
     ...attRows.map((a) => env.DB.prepare('INSERT INTO attachments (id, feedback_id, name, mime, data, created_at) VALUES (?,?,?,?,?,?)').bind(a.id, f.id, a.name, a.mime, a.data, t)),
     touch(env, project.id, t),
   ]);
+  f.seq = (await env.DB.prepare('SELECT seq FROM feedback WHERE id = ?').bind(f.id).first()).seq;
   return json({ feedback: publicFeedback(f, attRows.map(attachmentMeta)) }, 201);
 }
 
@@ -185,6 +188,7 @@ export async function deleteFeedback(ctx) {
   need(ctx, 'owner');
   const { env, project, params } = ctx;
   const f = await findFeedback(ctx, params[0]);
+  assert(f.version_number === project.current_version, 'VERSION_LOCKED', '历史版本只读，不能改动', 409);
   assert(f.version_status !== 'approved', 'VERSION_APPROVED', '这一版已确认通过，不能再删意见', 409);
   const t = nowIso();
   await env.DB.batch([
@@ -198,6 +202,7 @@ export async function patchFeedback(ctx) {
   need(ctx, 'editor');
   const { env, project, params, request } = ctx;
   const f = await findFeedback(ctx, params[0]);
+  assert(f.version_number === project.current_version, 'VERSION_LOCKED', '历史版本只读，不能改动', 409);
   const body = await readJson(request);
   const sets = []; const vals = [];
   if (body.status != null) {
@@ -205,8 +210,7 @@ export async function patchFeedback(ctx) {
     sets.push('status = ?'); vals.push(body.status); f.status = body.status;
   }
   if (body.editor_note != null) {
-    const note = String(body.editor_note);
-    assert(note.length <= 2000, 'BAD_REQUEST', '修改说明不能超过 2000 字');
+    const note = optionalString(body.editor_note, '修改说明', 2000);
     sets.push('editor_note = ?'); vals.push(note); f.editor_note = note;
   }
   assert(sets.length, 'BAD_REQUEST', '没有可修改的内容');
@@ -229,7 +233,7 @@ export async function getAnnotation(ctx) {
 
 export async function getAttachment(ctx) {
   const { env, project, params } = ctx;
-  const row = await env.DB.prepare('SELECT a.id, a.name, a.mime, a.data FROM attachments a JOIN feedback f ON f.id = a.feedback_id JOIN versions v ON v.id = f.version_id WHERE a.id = ? AND v.project_id = ?').bind(params[0], project.id).first();
+  const row = await env.DB.prepare('SELECT a.id, a.name, a.mime, a.data FROM attachments a JOIN feedback f ON f.id = a.feedback_id JOIN versions v ON v.id = f.version_id WHERE a.id = ? AND v.project_id = ? AND f.deleted_at IS NULL').bind(params[0], project.id).first();
   assert(row, 'NOT_FOUND', '找不到这个附件', 404);
   return json({ id: row.id, name: row.name, mime: row.mime, data: row.data });
 }
