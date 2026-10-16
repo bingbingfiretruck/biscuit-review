@@ -4,7 +4,7 @@ import {
   ANNOTATION_MAX_EDGE, ATTACHMENT_MAX_EDGE, MAX_ATTACHMENTS,
 } from './config.js';
 import {
-  $, h, fmtTimecode, fmtBytes, fmtDuration, fmtDate, readVideoMeta, fileToImage, shrinkToDataUrl,
+  $, h, fmtTimecode, fmtTimecodeMs, fmtDateSlash, fmtBytes, fmtDuration, fmtDate, readVideoMeta, fileToImage, shrinkToDataUrl,
   toast, confirmModal, imageModal, storage, storageSet, initTheme, currentTheme, setTheme,
 } from './util.js';
 import { createRemoteApi } from './api.js';
@@ -17,7 +17,7 @@ const token = new URLSearchParams(location.search).get('t') || '';
 
 const els = {
   shell: $('#shell'), gate: $('#gate'), gateTitle: $('#gateTitle'), gateText: $('#gateText'), gateActions: $('#gateActions'),
-  projectName: $('#projectName'), versionChip: $('#versionChip'), roleChip: $('#roleChip'), themeBtn: $('#themeBtn'),
+  projectName: $('#projectName'), headEyebrow: $('#headEyebrow'), headSub: $('#headSub'), downloadBtn: $('#downloadBtn'), miniStatus: $('#miniStatus'), roleChip: $('#roleChip'),
   banner: $('#banner'), railTitle: $('#railTitle'), railHint: $('#railHint'), versionList: $('#versionList'),
   playerRoot: $('#player'), fileWarn: $('#fileWarn'), uploadBar: $('#uploadBar'), panel: $('#panel'),
 };
@@ -41,8 +41,6 @@ let tcDisplay = null;
 
 // ---------- 启动 ----------
 initTheme();
-updateThemeBtn();
-els.themeBtn.addEventListener('click', () => { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); updateThemeBtn(); });
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateThemeBtn);
 els.panel.addEventListener('focusout', () => { if (state.pendingRender) setTimeout(() => { if (state.pendingRender && !isTypingInList()) { state.pendingRender = false; renderAll(); } }, 80); });
 
@@ -155,19 +153,49 @@ function hideBanner() {
   if (state.localMode) return;
   els.banner.hidden = true;
 }
-function updateThemeBtn() { els.themeBtn.textContent = currentTheme() === 'dark' ? '日间' : '黑夜'; }
+function updateThemeBtn() {
+  const t = currentTheme();
+  for (const b of document.querySelectorAll('.seg__btn[data-theme]')) b.classList.toggle('is-active', b.dataset.theme === t);
+}
+function themeToggle() {
+  const mk = (key, label) => h('button', { class: 'seg__btn', type: 'button', dataset: { theme: key }, onClick: () => { setTheme(key); updateThemeBtn(); } }, label);
+  const seg = h('div', { class: 'seg', role: 'group', 'aria-label': '界面主题' }, mk('light', '日间'), mk('dark', '黑夜'));
+  queueMicrotask(updateThemeBtn);
+  return seg;
+}
 
 // ---------- 渲染 ----------
 function renderAll() {
   const sel = selected();
   document.title = `饼干在线审片 · ${state.project.name}`;
   els.projectName.textContent = state.project.name;
-  els.versionChip.textContent = `客稿 V${sel.number}`;
+  els.headEyebrow.textContent = `客稿 V${sel.number}${isCurrent() ? '' : ' · 历史'}`;
+  els.headSub.textContent = `${fmtDateSlash(sel.created_at)} 发出`;
   els.roleChip.textContent = ROLE_LABEL[state.role] + (state.localMode ? ' · 本地模式' : '');
+  renderHeadSide(sel);
   renderRail();
   renderPanel();
   renderMarkers();
   syncPlayerSource();
+}
+
+function renderHeadSide(v) {
+  const hosted = v.video_status === 'ready' && !state.api.isLocal;
+  els.downloadBtn.hidden = !hosted;
+  if (hosted) {
+    els.downloadBtn.href = `${state.api.videoUrl(v.id)}&download=1`;
+    els.downloadBtn.setAttribute('download', v.video_name || 'video.mp4');
+    els.downloadBtn.textContent = `↓ 下载原片 · ${fmtBytes(v.video_size)}`;
+  }
+  const n = v.feedback.length;
+  const owner = state.role === 'owner';
+  let title; let text;
+  if (!isCurrent()) { title = '历史版本'; text = `这一版收到 ${n} 条意见，只能回看。`; }
+  else if (v.status === 'approved') { title = '已确认通过'; text = `${fmtDateSlash(v.approved_at)} 确认，等待发布。`; }
+  else if (v.status === 'closed') { title = owner ? '已提交修改意见' : '可以开始修改'; text = owner ? '剪辑师正在处理；新版发出前仍可继续补充。' : `饼干已结束本轮，共 ${n} 条意见。`; }
+  else { title = owner ? (n ? '意见填写中' : '等待你的意见') : '等待饼干的意见'; text = owner ? (n ? `已写 ${n} 条；写完请点「本轮反馈结束」。` : '暂停在要改的画面上写第一条。') : (n ? `已有 ${n} 条，饼干还在补充。` : '饼干还没开始写。'); }
+  els.miniStatus.hidden = false;
+  els.miniStatus.replaceChildren(h('div', { class: 'mini-status__title' }, title), h('div', { class: 'mini-status__text' }, text));
 }
 
 function renderRail() {
@@ -216,6 +244,16 @@ function renderPanel() {
   const v = selected();
   const cur = isCurrent();
   const parts = [];
+  parts.push(h('div', { class: 'panel-head' },
+    h('div', { class: 'panel-head__copy' },
+      h('span', { class: 'panel-head__title' }, `客稿 V${v.number} 审片`),
+      h('span', { class: 'panel-head__sub' }, cur ? '当前版本 · 写意见与本轮反馈同屏' : '历史只读 · 时间码只定位这一版')),
+    themeToggle()));
+  if (cur && v.status === 'closed') {
+    parts.push(h('div', { class: 'notice' }, state.role === 'owner'
+      ? `本次反馈结束已提交，共 ${v.feedback.length} 条意见；之后仍可撤回继续补充。`
+      : `饼干已结束本轮反馈，共 ${v.feedback.length} 条意见；改完逐条勾「已修改」。`));
+  }
   if (cur && state.role === 'owner' && v.status === 'collecting') parts.push(getWriteCard(v));
   if (cur) parts.push(renderStatusCard(v));
   parts.push(renderListCard(v, { readOnly: !cur }));
@@ -506,8 +544,8 @@ function renderStatusCard(v) {
         h('button', { class: 'btn btn--primary', type: 'button', disabled: !n, title: n ? '' : '至少先提交一条意见', onClick: closeRound }, '本轮反馈结束'),
         h('button', { class: 'btn btn--ghost', type: 'button', onClick: approve }, '确认本版通过'));
     } else if (v.status === 'closed') {
-      stateText = `本轮反馈已结束 · ${n} 条意见`;
-      hint = '剪辑师可以开始修改了。下一稿发出前，可撤回结束并继续补充意见。';
+      stateText = '剪辑师已收到「开始修改」的提示';
+      hint = '下一稿上传前仍可撤回并继续补充。剪辑师勾了「已修改」会在下方意见里显示。';
       actions.push(
         h('button', { class: 'btn btn--ghost', type: 'button', onClick: reopenRound }, '撤回结束，继续写意见'),
         h('button', { class: 'btn btn--ok', type: 'button', onClick: approve }, '确认本版通过'));
@@ -526,11 +564,12 @@ function renderStatusCard(v) {
     stateText = '这一版已确认通过';
     hint = `${fmtDate(v.approved_at)} 饼干确认这一版没有问题。`;
   }
+  for (const b of actions) b.classList.add('btn--block', 'btn--lg');
   return h('section', { class: cls },
-    h('div', { class: 'card__head' }, h('div', { class: 'eyebrow' }, '本轮反馈'), h('span', { class: `chip ${v.status === 'approved' ? 'chip--ok' : v.status === 'closed' ? 'chip--ok' : ''}` }, STATUS_LABEL[v.status])),
+    h('div', { class: 'eyebrow eyebrow--pink' }, STATUS_LABEL[v.status]),
     h('div', { class: 'status-card__state' }, stateText),
-    h('div', { class: 'hint' }, hint),
-    actions.length ? h('div', { class: 'row' }, ...actions) : null);
+    h('div', { class: 'status-card__text' }, hint),
+    actions.length ? h('div', { class: 'stack', style: { gap: '8px' } }, ...actions) : null);
 }
 
 async function runAction(fn, successMsg) {
@@ -571,23 +610,23 @@ function sortFeedback(list) {
 }
 function sortToggle() {
   const mk = (key, label) => h('button', { type: 'button', class: state.sort === key ? 'is-active' : '', onClick: () => { state.sort = key; storageSet('biscuit.sort', key); renderPanel(); } }, label);
-  return h('div', { class: 'sort-toggle', role: 'group', 'aria-label': '意见展示排序' }, mk('timecode', '按时间码'), mk('seq', '原顺序'));
+  return h('div', { class: 'sort-toggle', role: 'group', 'aria-label': '意见展示排序' }, mk('seq', '原顺序'), mk('timecode', '按时间码'));
 }
 
 function renderListCard(v, { readOnly }) {
   const list = sortFeedback(v.feedback);
   const owner = state.role === 'owner';
-  const title = readOnly ? `客稿 V${v.number} 收到的意见` : '已提交的意见';
+  const title = readOnly ? `V${v.number} 收到的反馈` : '本轮反馈';
   let body;
   if (list.length) body = h('div', { class: 'fb-list' }, ...list.map((f) => renderItem(f, { readOnly, v })));
   else if (readOnly) body = h('div', { class: 'empty' }, h('div', { class: 'empty__title' }, '这个客稿版本没有收到意见'));
   else if (owner) body = h('div', { class: 'empty' }, h('div', { class: 'empty__title' }, '这一轮还没有提交意见'), '播放视频，在需要调整的位置暂停并添加第一条意见。');
   else body = h('div', { class: 'empty' }, h('div', { class: 'empty__title' }, '饼干还没有提交意见'), '意见提交后会在这里逐条显示，点一条就能跳到对应画面。');
   const canClear = readOnly && owner && !state.api.isLocal && v.video_status === 'ready';
-  return h('section', { class: 'card', id: 'listCard' },
-    h('div', { class: 'card__head' },
-      h('div', { class: 'row' }, h('div', { class: 'card__title' }, title), h('span', { class: 'chip chip--muted' }, `${list.length} 条`), readOnly && h('span', { class: 'chip chip--muted' }, '历史只读')),
-      list.length > 1 && sortToggle()),
+  return h('section', { class: 'list-section', id: 'listCard' },
+    h('div', { class: 'list-head' },
+      h('div', { class: 'list-head__copy' }, h('div', { class: 'eyebrow eyebrow--pink' }, `客稿 V${v.number}${readOnly ? ' · 历史只读' : ''}`), h('div', { class: 'list-head__title' }, title)),
+      h('div', { class: 'row' }, list.length > 1 && sortToggle(), h('span', { class: 'chip chip--count' }, `${list.length} 条`))),
     canClear ? h('div', { class: 'row row--between' }, h('span', { class: 'hint' }, `这一版视频已托管 · ${fmtBytes(v.video_size)}`), h('button', { class: 'btn btn--sm btn--ghost', type: 'button', onClick: () => clearVideo(v) }, '清理视频释放空间')) : null,
     body,
     !readOnly && state.role === 'editor' && list.length ? h('div', { class: 'hint' }, '点一条意见即可跳到对应画面；改完勾「已修改」，饼干那边会同步看到。') : null);
@@ -596,22 +635,24 @@ function renderListCard(v, { readOnly }) {
 function renderItem(f, { readOnly, v, basis = false }) {
   const canEdit = !readOnly && state.role === 'editor';
   const canDelete = !readOnly && state.role === 'owner' && v.status !== 'approved';
-  const tcChip = f.timecode == null
-    ? h('span', { class: 'chip chip--muted' }, '整片')
-    : h('span', { class: 'chip chip--mono' }, fmtTimecode(f.timecode, fps()));
-  const meta = h('div', { class: 'fb-item__meta' }, tcChip,
+  const strip = h('div', { class: 'fb-strip' },
+    h('span', { class: 'fb-strip__seq' }, `#${f.seq}`),
+    h('span', { class: 'fb-strip__tc mono' }, f.timecode == null ? '整片' : fmtTimecodeMs(f.timecode)),
+    h('span', { class: 'fb-strip__date' }, fmtDateSlash(f.created_at)),
     f.status === 'done' && h('span', { class: 'chip chip--ok' }, '已修改'),
-    f.attachments.length ? h('span', { class: 'chip chip--muted' }, `${f.attachments.length} 张参考图`) : null,
-    h('span', { class: 'muted small' }, fmtDate(f.created_at)));
+    f.attachments.length ? h('span', { class: 'fb-strip__date' }, `${f.attachments.length} 张参考图`) : null,
+    h('span', { class: 'grow' }),
+    canDelete ? h('button', { class: 'btn btn--sm btn--outline-danger', type: 'button', onClick: () => deleteFeedback(f) }, '删除') : null);
   const media = [];
   if (f.has_annotation && f.annotation_thumb) {
     media.push(h('img', { class: 'fb-item__thumb', src: f.annotation_thumb, alt: '画面标记', title: '点击查看大图', onClick: () => openAnnotation(f) }));
   }
   for (const a of f.attachments) media.push(attachmentThumb(a));
-  const body = h('div', { class: 'fb-item__body' }, meta,
-    f.text && h('div', { class: 'fb-item__text' }, f.text),
+  const body = h('div', { class: 'fb-item__body' },
+    f.text ? h('div', { class: 'fb-item__text' }, f.text) : h('div', { class: 'fb-item__text fb-item__text--empty' }, f.has_annotation ? '（画面标记）' : '（参考图）'),
     media.length ? h('div', { class: 'fb-item__media' }, ...media) : null,
-    !canEdit && f.editor_note ? h('div', { class: 'fb-item__note' }, `修改说明：${f.editor_note}`) : null);
+    !canEdit && f.editor_note ? h('div', { class: 'fb-item__note' }, `修改说明：${f.editor_note}`) : null,
+    strip);
   if (canEdit) {
     body.append(h('div', { class: 'fb-item__editor' },
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: f.status === 'done', onChange: (e) => updateFeedback(f, { status: e.target.checked ? 'done' : 'open' }) }), '已修改'),
@@ -620,10 +661,6 @@ function renderItem(f, { readOnly, v, basis = false }) {
         onBlur: (e) => { const val = e.target.value.trim(); if (val !== (f.editor_note || '')) updateFeedback(f, { editor_note: val }); },
         onKeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
       })));
-  }
-  if (canDelete) {
-    body.append(h('div', { class: 'fb-item__actions' },
-      h('button', { class: 'btn btn--sm btn--danger', type: 'button', onClick: () => deleteFeedback(f) }, '删除')));
   }
   return h('article', {
     class: `fb-item${f.status === 'done' ? ' is-done' : ''}${!basis && f.id === state.activeFeedbackId ? ' is-active' : ''}${basis ? ' fb-item--readonly' : ''}`,
@@ -634,7 +671,7 @@ function renderItem(f, { readOnly, v, basis = false }) {
       if (e.target.closest('button, input, textarea, label, img, a')) return;
       selectFeedback(f);
     },
-  }, h('div', { class: 'fb-item__seq', 'aria-label': `第 ${f.seq} 条` }, String(f.seq)), body);
+  }, body);
 }
 
 function selectFeedback(f) {

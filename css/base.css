@@ -139,3 +139,14 @@ textarea.input { min-height: 96px; resize: vertical; line-height: 1.5; }
 .progress { height: 8px; border-radius: var(--r-pill); background: var(--line); overflow: hidden; }
 .progress__bar { height: 100%; width: 0; background: var(--pink-strong); transition: width .2s; }
 .upload-bar { display: grid; gap: 6px; padding: 10px 14px; border-radius: var(--r-md); background: var(--pink-soft); color: var(--plum); font-size: var(--fs-sm); font-weight: 600; }
+
+/* 按钮变体（参考站形式） */
+.btn--lg { min-height: 48px; font-size: var(--fs-md); border-radius: var(--r-md); }
+.btn--outline-danger { background: var(--card-solid); color: var(--tc); border: 2px solid var(--tc); min-height: 34px; }
+.btn--download { background: color-mix(in srgb, var(--plum) 14%, var(--card-solid)); color: var(--plum); min-height: 46px; padding: 0 20px; font-size: var(--fs-md); border-radius: var(--r-md); text-decoration: none; }
+.eyebrow--pink { color: var(--pink-strong); letter-spacing: .02em; }
+
+/* 分段开关 */
+.seg { display: inline-flex; padding: 4px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--card-solid); }
+.seg__btn { border: 0; background: transparent; padding: 8px 14px; border-radius: 10px; font-weight: 700; font-size: var(--fs-sm); color: var(--muted); cursor: pointer; }
+.seg__btn.is-active { background: var(--pink-soft); color: var(--plum); }

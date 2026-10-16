@@ -55,6 +55,36 @@ export function fmtTimecode(sec, fps = 30) {
   return hh ? `${pad(hh)}:${core}` : core;
 }
 
+/** 秒 → 分:秒.毫秒（列表用，参考站形式），小时为 0 时省略 */
+export function fmtTimecodeMs(sec) {
+  if (sec == null || !isFinite(sec)) return '整片';
+  const total = Math.max(0, sec);
+  const hh = Math.floor(total / 3600);
+  const mm = Math.floor((total % 3600) / 60);
+  const ss = (total % 60).toFixed(3).padStart(6, '0');
+  return `${hh ? pad(hh) + ':' : ''}${pad(mm)}:${ss}`;
+}
+/** 秒 → 时:分:秒:帧（播放器大号时间码） */
+export function fmtTimecodeFrames(sec, fps = 30) {
+  if (sec == null || !isFinite(sec)) return '00:00:00:00';
+  const frames = Math.round(Math.max(0, sec) * fps);
+  const f = frames % fps;
+  const s = Math.floor(frames / fps);
+  return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}:${pad(f)}`;
+}
+/** 秒 → 分:秒（控制条小钟） */
+export function fmtClock(sec) {
+  if (sec == null || !isFinite(sec)) return '00:00';
+  const s = Math.floor(Math.max(0, sec));
+  const hh = Math.floor(s / 3600);
+  return `${hh ? pad(hh) + ':' : ''}${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+}
+export function fmtDateSlash(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function fmtBytes(n) {
   if (!n) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];

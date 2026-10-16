@@ -408,6 +408,9 @@ export async function getVideo(ctx) {
   assert(head, 'NOT_FOUND', '视频文件不存在', 404);
   headers.set('Content-Type', head.mime);
   headers.set('ETag', head.etag);
+  if (new URL(request.url).searchParams.get('download')) {
+    headers.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(v.video_name || 'video.mp4')}`);
+  }
   if (request.method === 'HEAD') {
     headers.set('Content-Length', String(head.size));
     return new Response(null, { status: 200, headers });

@@ -1,5 +1,5 @@
 // 播放器：本地文件、逐帧、时间码、进度条意见标记、大屏模式。
-import { h, fmtTimecode, fmtBytes, pad } from './util.js';
+import { h, fmtTimecode, fmtTimecodeFrames, fmtClock, fmtBytes, pad } from './util.js';
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
@@ -13,10 +13,14 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
   const video = h('video', { class: 'player__video', playsinline: true, preload: 'metadata', crossorigin: 'anonymous', 'aria-label': '当前客稿视频' });
   const markerLayer = h('div', { class: 'player__markers', 'aria-label': '意见标记' });
   const range = h('input', { class: 'player__range', type: 'range', min: 0, max: 1000, step: 1, value: 0, 'aria-label': '视频时间线' });
-  const timeLabel = h('span', { class: 'player__time mono' }, '00:00.00');
-  const durLabel = h('span', { class: 'player__dur mono' }, '00:00.00');
+  const timeLabel = h('span', { class: 'player__time mono' }, '00:00');
+  const durLabel = h('span', { class: 'player__dur mono' }, '00:00');
+  const bigTc = h('span', { class: 'player__tc-big mono' }, '00:00:00:00');
+  const fpsLabel = h('span', { class: 'player__fps' }, `${currentFps}fps`);
+  const countLabel = h('span', { class: 'player__timeline-count mono' }, '0 条');
   const playBtn = h('button', { class: 'player__btn player__btn--play', type: 'button', 'aria-label': '播放', onClick: togglePlay }, '▶');
-  const speedBtn = h('button', { class: 'player__btn player__btn--text', type: 'button', 'aria-label': '播放速度', onClick: cycleSpeed }, '1×');
+  const speedSel = h('select', { class: 'player__select', 'aria-label': '播放速度', onChange: (e) => { video.playbackRate = Number(e.target.value); } },
+    ...SPEEDS.map((s) => h('option', { value: s, selected: s === 1 }, `${s}×`)));
   const theaterBtn = h('button', { class: 'player__btn player__btn--text', type: 'button', 'aria-label': '大屏审片', onClick: () => setTheater(!root.classList.contains('player--theater')) }, '大屏');
   const fileInput = h('input', { type: 'file', accept: 'video/*,.mp4,.mov,.m4v,.webm', class: 'vh', id: 'player-file', onChange: (e) => { const f = e.target.files?.[0]; if (f) loadFile(f); e.target.value = ''; } });
   const emptyTitle = h('div', { class: 'player__empty-title' }, '选择客稿视频');
@@ -28,18 +32,25 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
     emptyActions,
     fileInput);
 
+  const ctl = (label, title, fn) => h('button', { class: 'player__btn player__btn--text', type: 'button', title, onClick: fn }, label);
   const controls = h('div', { class: 'player__controls' },
-    h('div', { class: 'player__timeline' }, range, markerLayer),
+    h('div', { class: 'player__clock' }, timeLabel, h('span', { class: 'player__sep' }, '/'), durLabel),
     h('div', { class: 'player__row' },
       h('div', { class: 'player__group' },
+        h('label', { class: 'player__btn player__btn--text', for: 'player-file', title: '换一个文件' }, '换文件')),
+      h('div', { class: 'player__group player__group--center' },
+        ctl('−1 帧', '后退一帧（←）', () => stepFrames(-1)),
+        ctl('↺ 3s', '后退 3 秒（Shift+←）', () => stepSeconds(-3)),
         playBtn,
-        h('button', { class: 'player__btn player__btn--text', type: 'button', title: '后退 3 秒（Shift+←）', onClick: () => stepSeconds(-3) }, '−3s'),
-        h('button', { class: 'player__btn player__btn--text', type: 'button', title: '后退一帧（←）', onClick: () => stepFrames(-1) }, '−1帧'),
-        h('button', { class: 'player__btn player__btn--text', type: 'button', title: '前进一帧（→）', onClick: () => stepFrames(1) }, '+1帧'),
-        h('button', { class: 'player__btn player__btn--text', type: 'button', title: '前进 3 秒（Shift+→）', onClick: () => stepSeconds(3) }, '+3s')),
-      h('div', { class: 'player__group player__group--time' }, timeLabel, h('span', { class: 'player__sep' }, '/'), durLabel),
-      h('div', { class: 'player__group' }, speedBtn, theaterBtn,
-        h('label', { class: 'player__btn player__btn--text', for: 'player-file', title: '换一个文件' }, '换文件'))));
+        ctl('3s ↻', '前进 3 秒（Shift+→）', () => stepSeconds(3)),
+        ctl('+1 帧', '前进一帧（→）', () => stepFrames(1))),
+      h('div', { class: 'player__group' }, speedSel, theaterBtn)),
+    h('div', { class: 'player__tc' }, bigTc, fpsLabel),
+    h('div', { class: 'player__timeline-head' },
+      h('span', { class: 'player__timeline-title' }, '意见时间线'),
+      h('span', { class: 'player__timeline-hint' }, '点标记定位并暂停'),
+      countLabel),
+    h('div', { class: 'player__timeline' }, range, markerLayer));
 
   const stage = h('div', { class: 'player__stage' }, video, empty);
   root.classList.add('player');
@@ -50,7 +61,7 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
   video.addEventListener('loadedmetadata', () => {
     // 舞台按视频比例自适应（竖屏视频不再被 16:9 压成一小条，也不会撑到原始高度）
     if (video.videoWidth && video.videoHeight) stage.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
-    durLabel.textContent = fmtTimecode(video.duration, currentFps);
+    durLabel.textContent = fmtClock(video.duration);
     renderMarkers();
     tick();
   });
@@ -68,7 +79,7 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
   });
 
   let scrubbing = false;
-  range.addEventListener('input', () => { scrubbing = true; const t = (range.value / 1000) * (video.duration || 0); video.currentTime = t; timeLabel.textContent = fmtTimecode(t, currentFps); });
+  range.addEventListener('input', () => { scrubbing = true; const t = (range.value / 1000) * (video.duration || 0); video.currentTime = t; paintTime(t); });
   range.addEventListener('change', () => { scrubbing = false; tick(); });
 
   root.addEventListener('keydown', (e) => {
@@ -87,21 +98,20 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
       rafPending = false;
       const t = video.currentTime || 0;
       if (!scrubbing && video.duration) range.value = Math.round((t / video.duration) * 1000);
-      timeLabel.textContent = fmtTimecode(t, currentFps);
+      paintTime(t);
       onTime(t, video.paused);
     });
   }
 
+  function paintTime(t) {
+    timeLabel.textContent = fmtClock(t);
+    bigTc.textContent = fmtTimecodeFrames(t, currentFps);
+    range.style.setProperty('--pct', `${video.duration ? (t / video.duration) * 100 : 0}%`);
+  }
   function togglePlay() {
     if (!file) return;
     if (video.paused) video.play().catch(() => {});
     else video.pause();
-  }
-  function cycleSpeed() {
-    const i = SPEEDS.indexOf(video.playbackRate);
-    const next = SPEEDS[(i + 1) % SPEEDS.length];
-    video.playbackRate = next;
-    speedBtn.textContent = `${next}×`;
   }
   function clamp(t) { return Math.min(Math.max(0, t), video.duration || 0); }
   function stepFrames(n) {
@@ -123,10 +133,11 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
 
   function renderMarkers() {
     markerLayer.replaceChildren();
+    const timed = markers.filter((m) => m.timecode != null);
+    countLabel.textContent = `${timed.length} 条`;
     const dur = video.duration;
     if (!dur) return;
-    for (const m of markers) {
-      if (m.timecode == null) continue;
+    for (const m of timed) {
       const left = Math.min(100, Math.max(0, (m.timecode / dur) * 100));
       markerLayer.append(h('button', {
         class: `player__marker${m.active ? ' is-active' : ''}`, type: 'button',
@@ -139,7 +150,7 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
   }
 
   function setMarkers(list) { markers = list || []; renderMarkers(); }
-  function setFps(v) { currentFps = v; durLabel.textContent = fmtTimecode(video.duration || 0, currentFps); tick(); renderMarkers(); }
+  function setFps(v) { currentFps = v; fpsLabel.textContent = `${v}fps`; tick(); renderMarkers(); }
 
   function loadFile(f) {
     file = f;
