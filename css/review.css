@@ -141,19 +141,27 @@ body.theater-open { overflow: hidden; }
 .gate__title { font-size: var(--fs-lg); font-weight: 800; }
 .gate__text { color: var(--muted); font-size: var(--fs-sm); }
 
-/* ===== 画面标记层 ===== */
-.markup { position: fixed; inset: 0; z-index: 1700; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: #100d0f; color: #f8eef1; }
-.markup__bar { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 10px 14px; background: rgba(255, 255, 255, .04); }
-.markup__tools, .markup__colors, .markup__actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.markup__tool { min-height: 34px; padding: 0 12px; border-radius: 9px; border: 1px solid rgba(255, 255, 255, .15); background: transparent; color: #f8eef1; font-weight: 700; font-size: var(--fs-sm); cursor: pointer; }
-.markup__tool.is-active { background: #f2a7b6; border-color: #f2a7b6; color: #211d20; }
-.markup__color { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .3); cursor: pointer; padding: 0; }
-.markup__color.is-active { border-color: #fff; transform: scale(1.15); }
-.markup .btn--ghost { color: #f8eef1; border-color: rgba(255, 255, 255, .2); }
-.markup .btn--primary { background: #f2a7b6; color: #211d20; }
-.markup__stage { display: grid; place-items: center; min-height: 0; padding: 12px; overflow: hidden; }
-.markup__frame { --ar: 1.7778; position: relative; line-height: 0; width: min(100%, calc((100vh - 150px) * var(--ar))); }
-.markup__canvas { width: 100%; height: auto; touch-action: none; cursor: crosshair; display: block; }
-.markup__text { position: absolute; width: min(60%, 320px); transform: translate(0, -50%); line-height: 1.4; }
-.markup__hint { padding: 8px 14px 12px; text-align: center; font-size: var(--fs-xs); color: #bfaeb4; }
-body.markup-open { overflow: hidden; }
+/* ===== 画面标记：播放器原位编辑 ===== */
+.mk { position: absolute; inset: 0; background: #000; }
+.mk__canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; touch-action: none; cursor: crosshair; display: block; }
+.mk--pan .mk__canvas { cursor: grab; }
+.mk--adjust .mk__canvas { cursor: move; }
+.mk--text .mk__canvas { cursor: text; }
+.mk__text { position: absolute; width: min(60%, 320px); transform: translate(0, -50%); line-height: 1.4; }
+.mk-bar { display: grid; gap: 8px; padding: 10px 12px 12px; background: var(--player-bg); }
+.mk-row { display: flex; gap: 6px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.mk-shape { position: relative; }
+.mk-btn { position: relative; display: inline-flex; align-items: center; gap: 4px; min-height: 38px; padding: 0 14px; border-radius: 11px; border: 1px solid rgba(255, 255, 255, .14); background: rgba(255, 255, 255, .06); color: var(--player-fg); font-weight: 700; font-size: var(--fs-sm); cursor: pointer; white-space: nowrap; }
+.mk-btn:hover { background: rgba(255, 255, 255, .12); }
+.mk-btn.is-active { background: #f2a7b6; border-color: #f2a7b6; color: #211d20; }
+.mk-btn:disabled { opacity: .4; cursor: not-allowed; }
+.mk-btn--primary { background: var(--pink-strong); border-color: transparent; color: var(--on-accent); }
+.mk-caret { font-size: 11px; opacity: .8; }
+.mk-menu { position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 5; display: grid; min-width: 120px; padding: 6px; border-radius: 12px; background: #1c1719; border: 1px solid rgba(255, 255, 255, .14); box-shadow: var(--shadow-lg); }
+.mk-menu[hidden] { display: none; }
+.mk-menu button { text-align: left; padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--player-fg); font-weight: 700; font-size: var(--fs-sm); cursor: pointer; }
+.mk-menu button:hover, .mk-menu button.is-active { background: rgba(255, 255, 255, .1); }
+.mk-color { width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .35); cursor: pointer; padding: 0; }
+.mk-color.is-active { border-color: #fff; box-shadow: 0 0 0 2px #000, 0 0 0 4px #fff; }
+.mk-zoom { min-width: 56px; text-align: center; font-family: var(--mono); color: #d9cbd0; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.player--markup .player__stage { cursor: default; }

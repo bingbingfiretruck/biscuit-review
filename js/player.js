@@ -216,7 +216,7 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
 
   const onTheaterKey = (e) => {
     if (e.key !== 'Escape') return;
-    if (document.querySelector('.modal-backdrop, .markup')) return; // 弹层/标记层自己处理 Esc
+    if (document.querySelector('.modal-backdrop, .mk')) return; // 弹层/标记层自己处理 Esc
     setTheater(false);
   };
   function setTheater(on) {
