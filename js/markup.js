@@ -70,7 +70,7 @@ export function openMarkup({ player, baseCanvas, initialStrokes = [], onDone, on
   }
 
   // ---- 工具状态 ----
-  const isShapeTool = () => Object.hasOwn(SHAPE_NAME, st.tool);
+  function isShapeTool() { return Object.hasOwn(SHAPE_NAME, st.tool); }
   function sync() {
     ui.shapeBtn.replaceChildren(SHAPE_NAME[st.shape], h('span', { class: 'mk-caret', 'aria-hidden': 'true' }, '▾'));
     ui.shapeBtn.classList.toggle('is-active', isShapeTool());

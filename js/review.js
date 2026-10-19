@@ -9,9 +9,9 @@ import {
 } from './util.js';
 import { createRemoteApi } from './api.js';
 import { createLocalApi } from './localstore.js';
-import { createPlayer } from './player.js';
-import { openMarkup } from './markup.js';
-import { createComposer } from './composer.js';
+import { createPlayer } from './player.js?v=2';
+import { openMarkup } from './markup.js?v=2';
+import { createComposer } from './composer.js?v=2';
 import { uploadVideo } from './upload.js';
 
 const token = new URLSearchParams(location.search).get('t') || '';
