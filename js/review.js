@@ -465,7 +465,7 @@ function renderStatusCard(v) {
   let stateText; let hint; const actions = [];
   if (owner) {
     if (v.status === 'collecting') {
-      stateText = n ? `意见填写中 · 已写 ${n} 条` : '等待你的意见';
+      stateText = n ? `意见填写中 · 已写 ${n} 条` : '等待您的意见';
       hint = '全部写完后点击「本轮反馈结束」，剪辑师才会知道可以开始修改。';
       actions.push(h('button', { class: 'btn btn--primary', type: 'button', disabled: !n, title: n ? '' : '至少先提交一条意见', onClick: closeRound }, '本轮反馈结束'));
     } else if (v.status === 'closed') {
