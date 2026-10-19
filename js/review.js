@@ -4,13 +4,14 @@ import {
   ANNOTATION_MAX_EDGE, ATTACHMENT_MAX_EDGE, MAX_ATTACHMENTS,
 } from './config.js';
 import {
-  $, h, fmtTimecode, fmtTimecodeMs, fmtDateSlash, fmtBytes, fmtDuration, fmtDate, readVideoMeta, fileToImage, shrinkToDataUrl,
+  $, h, fmtTimecode, fmtTimecodeMs, fmtDateSlash, fmtBytes, fmtDuration, fmtDate, readVideoMeta,
   toast, confirmModal, imageModal, storage, storageSet, initTheme, currentTheme, setTheme,
 } from './util.js';
 import { createRemoteApi } from './api.js';
 import { createLocalApi } from './localstore.js';
 import { createPlayer } from './player.js';
 import { openMarkup } from './markup.js';
+import { createComposer } from './composer.js';
 import { uploadVideo } from './upload.js';
 
 const token = new URLSearchParams(location.search).get('t') || '';
@@ -35,9 +36,8 @@ const state = {
 };
 const cache = { annotations: new Map(), attachments: new Map() };
 let player;
-let writeCard = null;
-let writeCardKey = '';
-let tcDisplay = null;
+let composer = null;
+let composerKey = '';
 
 // ---------- 启动 ----------
 initTheme();
@@ -52,7 +52,7 @@ async function boot() {
   state.api = state.localMode ? createLocalApi({ token }) : createRemoteApi({ token });
   player = createPlayer(els.playerRoot, {
     fps: 30,
-    onTime: (t) => { state.currentTime = t; updateTcDisplay(); },
+    onTime: (t) => { state.currentTime = t; composer?.syncTime(); },
     onSeekMarker: (id) => setActive(id, { scroll: true }),
     onFileChosen: handleFile,
     onError: handleHostedError,
@@ -110,7 +110,7 @@ async function loadState({ first = false } = {}) {
     // 对方发布了新版：跟到新版，草稿原样带过去
     state.selectedVersion = data.project.current_version;
     state.activeFeedbackId = null;
-    writeCardKey = '';
+    composerKey = '';
     toast(hasDraft() ? `客稿 V${data.project.current_version} 已发布，你没提交的草稿已带到新版` : `客稿 V${data.project.current_version} 已发布`);
   }
   if (first || prevFps !== data.project.fps) player.setFps(data.project.fps);
@@ -124,7 +124,7 @@ const fps = () => state.project?.fps || 30;
 const hasDraft = () => !!(state.draft.text.trim() || state.draft.annotation || state.draft.attachments.length);
 function isTypingInList() {
   const a = document.activeElement;
-  return !!(a && els.panel.contains(a) && a.matches('input[type="text"], textarea') && !(writeCard && writeCard.contains(a)));
+  return !!(a && els.panel.contains(a) && a.matches('input[type="text"], textarea') && !(composer && composer.el.contains(a)));
 }
 
 function schedulePoll() {
@@ -193,7 +193,7 @@ function renderHeadSide(v) {
   if (!isCurrent()) { title = '历史版本'; text = `这一版收到 ${n} 条意见，只能回看。`; }
   else if (v.status === 'approved') { title = '已确认通过'; text = `${fmtDateSlash(v.approved_at)} 确认，等待发布。`; }
   else if (v.status === 'closed') { title = owner ? '已提交修改意见' : '可以开始修改'; text = owner ? '剪辑师正在处理；新版发出前仍可继续补充。' : `饼干已结束本轮，共 ${n} 条意见。`; }
-  else { title = owner ? (n ? '意见填写中' : '等待你的意见') : '等待饼干的意见'; text = owner ? (n ? `已写 ${n} 条；写完请点「本轮反馈结束」。` : '暂停在要改的画面上写第一条。') : (n ? `已有 ${n} 条，饼干还在补充。` : '饼干还没开始写。'); }
+  else { title = owner ? (n ? `意见填写中 · 已写 ${n} 条` : '等待您的意见') : '等待饼干的意见'; text = owner ? (n ? '写完请点「本轮反馈结束」。' : '可逐条提交，之后仍能继续补充本轮。') : (n ? `已有 ${n} 条，饼干还在补充。` : '饼干还没开始写。'); }
   els.miniStatus.hidden = false;
   els.miniStatus.replaceChildren(h('div', { class: 'mini-status__title' }, title), h('div', { class: 'mini-status__text' }, text));
 }
@@ -264,7 +264,7 @@ function renderPanel() {
   if (cur) parts.push(renderPublishCard(v));
 
   const active = document.activeElement;
-  const keepFocus = writeCard && writeCard.contains(active);
+  const keepFocus = composer && composer.el.contains(active);
   const sel = keepFocus && active.selectionStart != null ? [active.selectionStart, active.selectionEnd] : null;
   els.panel.replaceChildren(...parts);
   if (keepFocus) {
@@ -295,7 +295,7 @@ function handleFile(file) {
   state.loadedFile = { name: file.name, size: file.size };
   state.playerSource = { versionId: selected().id, kind: 'local' };
   renderFileWarn();
-  renderAnnoBox();
+  composer?.refresh();
 }
 
 /** 托管视频加载失败：多半是刚上传、还没同步到附近节点，10 秒后自动重试 */
@@ -330,7 +330,7 @@ function syncPlayerSource() {
   }
   renderFileWarn();
   renderEmptyActions(v);
-  renderAnnoBox();
+  composer?.refresh();
 }
 
 function renderEmptyActions(v, { syncing = false } = {}) {
@@ -393,68 +393,18 @@ async function clearVideo(v) {
 // ---------- 写意见 ----------
 function getWriteCard(v) {
   const key = `v${v.number}`;
-  if (writeCard && writeCardKey === key) return writeCard;
-  writeCardKey = key;
-  writeCard = buildWriteCard(v);
-  return writeCard;
+  if (composer && composerKey === key) return composer.el;
+  composerKey = key;
+  composer = createComposer({
+    player, draft: state.draft, maxAttachments: MAX_ATTACHMENTS, attachmentMaxEdge: ATTACHMENT_MAX_EDGE,
+    onSubmit: submitFeedback, onApprove: approve, onMarkup: startMarkup,
+  });
+  return composer.el;
 }
 function resetDraft() {
-  // 原地清空：写意见卡里的事件处理器持有 state.draft 的引用，不能整个换掉
+  // 原地清空：composer 持有 state.draft 的引用，不能整个换掉
   Object.assign(state.draft, { text: '', lockedTimecode: null, annotation: null, attachments: [] });
-  const ta = writeCard && $('#fbText', writeCard);
-  if (ta) ta.value = '';
-  renderAnnoBox();
-  renderAttachBox();
-  updateTcDisplay();
-}
-
-function buildWriteCard(v) {
-  const d = state.draft;
-  tcDisplay = h('span', { class: 'tc-display', title: '时间码 · 时:分:秒.帧' }, '00:00.00');
-  const wholeCb = h('input', { type: 'checkbox', id: 'fbWhole', checked: d.whole, onChange: (e) => { d.whole = e.target.checked; updateTcDisplay(); } });
-  const ta = h('textarea', { class: 'input', id: 'fbText', rows: 4, placeholder: '输入对当前客稿的具体反馈…', onInput: (e) => { d.text = e.target.value; } }, d.text);
-  const card = h('section', { class: 'card write-card' },
-    h('div', { class: 'card__head' },
-      h('div', { class: 'card__title' }, '写意见'),
-      h('span', { class: 'eyebrow' }, `客稿 V${v.number}`)),
-    h('div', { class: 'tc-row' }, tcDisplay, h('label', { class: 'check' }, wholeCb, '整片（不带时间码）')),
-    h('div', { class: 'field' }, ta, h('div', { class: 'hint' }, '例如：这里的产品名称请放大一些。暂停在要改的画面上再写，时间码会自动带上。')),
-    h('div', { class: 'stack', id: 'annoBox' }),
-    h('div', { class: 'attach-grid', id: 'attachBox' }),
-    h('input', { type: 'file', accept: 'image/*', multiple: true, class: 'vh', id: 'attachInput', onChange: handleAttachPick }),
-    h('button', { class: 'btn btn--primary btn--block', type: 'button', id: 'submitBtn', onClick: submitFeedback }, '提交这条意见'),
-    h('div', { class: 'hint' }, '提交后仍可继续补充；全部写完后，请结束本轮反馈通知剪辑师。'));
-  queueMicrotask(() => { renderAnnoBox(); renderAttachBox(); updateTcDisplay(); });
-  return card;
-}
-
-function updateTcDisplay() {
-  if (!tcDisplay) return;
-  const d = state.draft;
-  if (d.whole) { tcDisplay.textContent = '整片'; tcDisplay.classList.add('is-whole'); return; }
-  tcDisplay.classList.remove('is-whole');
-  tcDisplay.textContent = fmtTimecode(d.lockedTimecode ?? state.currentTime, fps());
-}
-
-function renderAnnoBox() {
-  const box = writeCard && $('#annoBox', writeCard);
-  if (!box) return;
-  const a = state.draft.annotation;
-  if (a) {
-    box.replaceChildren(
-      h('div', { class: 'annotation-preview' },
-        h('img', { src: a.thumb, alt: '画面标记预览', onClick: () => imageModal(a.full, '画面标记（待提交）') }),
-        h('div', { class: 'annotation-preview__actions' },
-          h('button', { class: 'btn btn--sm', type: 'button', onClick: () => startMarkup(true) }, '继续编辑'),
-          h('button', { class: 'btn btn--sm btn--danger', type: 'button', onClick: () => { state.draft.annotation = null; state.draft.lockedTimecode = null; renderAnnoBox(); updateTcDisplay(); } }, '移除'))),
-      h('div', { class: 'hint' }, `标记画面取自 ${fmtTimecode(a.timecode, fps())}，这条意见的时间码已锁定到这一帧。`));
-  } else {
-    const has = player.hasFile();
-    box.replaceChildren(h('button', {
-      class: 'btn', type: 'button', id: 'markupBtn', disabled: !has, title: has ? '抓取当前画面，直接画出要改的地方' : '先选择客稿视频',
-      onClick: () => startMarkup(false),
-    }, '✎ 在当前帧画标记'));
-  }
+  composer?.refresh();
 }
 
 function startMarkup(edit) {
@@ -467,40 +417,18 @@ function startMarkup(edit) {
     timecode = player.currentTime();
     if (!base) return toast('先选择客稿视频，再画标记', 'warn');
   }
+  composer?.setMarkupOpen(true);
+  const finish = () => composer?.setMarkupOpen(false);
   openMarkup({
-    baseCanvas: base,
+    player, baseCanvas: base,
     initialStrokes: edit && d.annotation ? d.annotation.strokes : [],
     onDone: ({ full, thumb, strokes }) => {
       d.annotation = { full, thumb, strokes, base, timecode };
       d.lockedTimecode = timecode;
-      renderAnnoBox();
-      updateTcDisplay();
+      finish();
     },
+    onCancel: finish,
   });
-}
-
-async function handleAttachPick(e) {
-  const files = Array.from(e.target.files || []);
-  e.target.value = '';
-  for (const f of files) {
-    if (state.draft.attachments.length >= MAX_ATTACHMENTS) { toast(`参考图最多 ${MAX_ATTACHMENTS} 张`, 'warn'); break; }
-    if (!f.type.startsWith('image/')) { toast(`「${f.name}」不是图片，参考附件只支持图片`, 'warn'); continue; }
-    try {
-      const img = await fileToImage(f);
-      state.draft.attachments.push({ name: f.name, mime: 'image/jpeg', data: shrinkToDataUrl(img, ATTACHMENT_MAX_EDGE, 0.82) });
-    } catch { toast(`「${f.name}」读取失败`, 'warn'); }
-  }
-  renderAttachBox();
-}
-function renderAttachBox() {
-  const box = writeCard && $('#attachBox', writeCard);
-  if (!box) return;
-  const list = state.draft.attachments;
-  const items = list.map((a, i) => h('div', { class: 'attach-thumb' },
-    h('img', { src: a.data, alt: a.name, title: a.name, onClick: () => imageModal(a.data, a.name) }),
-    h('button', { class: 'attach-thumb__x', type: 'button', 'aria-label': `移除附件 ${a.name}`, onClick: () => { list.splice(i, 1); renderAttachBox(); } }, '✕')));
-  if (list.length < MAX_ATTACHMENTS) items.push(h('label', { class: 'attach-add', for: 'attachInput', title: '上传参考图片（会压缩）' }, '＋ 参考图'));
-  box.replaceChildren(...items);
 }
 
 async function submitFeedback() {
@@ -514,8 +442,7 @@ async function submitFeedback() {
     attachments: d.attachments.map((a) => ({ name: a.name, mime: a.mime, data: a.data })),
   };
   if (d.annotation) { body.annotation = d.annotation.full; body.annotation_thumb = d.annotation.thumb; }
-  const btn = $('#submitBtn', writeCard);
-  btn.disabled = true; btn.textContent = '正在提交…';
+  composer.setSubmitting(true);
   try {
     const res = await state.api.createFeedback(body);
     resetDraft();
@@ -526,7 +453,7 @@ async function submitFeedback() {
     toast(e.message || '意见提交失败，请稍后重试', 'warn');
     if (e.code === 'ROUND_CLOSED' || e.code === 'INVALID_TOKEN') loadState().catch(() => {});
   } finally {
-    btn.disabled = false; btn.textContent = '提交这条意见';
+    composer.setSubmitting(false);
   }
 }
 
@@ -540,9 +467,7 @@ function renderStatusCard(v) {
     if (v.status === 'collecting') {
       stateText = n ? `意见填写中 · 已写 ${n} 条` : '等待你的意见';
       hint = '全部写完后点击「本轮反馈结束」，剪辑师才会知道可以开始修改。';
-      actions.push(
-        h('button', { class: 'btn btn--primary', type: 'button', disabled: !n, title: n ? '' : '至少先提交一条意见', onClick: closeRound }, '本轮反馈结束'),
-        h('button', { class: 'btn btn--ghost', type: 'button', onClick: approve }, '确认本版通过'));
+      actions.push(h('button', { class: 'btn btn--primary', type: 'button', disabled: !n, title: n ? '' : '至少先提交一条意见', onClick: closeRound }, '本轮反馈结束'));
     } else if (v.status === 'closed') {
       stateText = '剪辑师已收到「开始修改」的提示';
       hint = '下一稿上传前仍可撤回并继续补充。剪辑师勾了「已修改」会在下方意见里显示。';
