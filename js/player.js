@@ -83,6 +83,7 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
   range.addEventListener('change', () => { scrubbing = false; tick(); });
 
   root.addEventListener('keydown', (e) => {
+    if (root.classList.contains('player--markup')) return; // 标记编辑中，快捷键交给编辑器
     if (e.target.matches('input, textarea, select')) return;
     if (e.key === ' ') { e.preventDefault(); togglePlay(); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); e.shiftKey ? stepSeconds(-3) : stepFrames(-1); }
@@ -197,6 +198,22 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
     return c;
   }
 
+  /** 把舞台与控制条位置借给标记编辑器；返回归还函数 */
+  function borrowStage({ stage: node, bar }) {
+    video.hidden = true; empty.hidden = true; controls.hidden = true;
+    root.classList.add('player--markup');
+    stage.append(node);
+    root.append(bar);
+    return () => {
+      node.remove(); bar.remove();
+      root.classList.remove('player--markup');
+      video.hidden = false;
+      empty.hidden = !!file;
+      controls.hidden = !file;
+      root.focus({ preventScroll: true });
+    };
+  }
+
   const onTheaterKey = (e) => {
     if (e.key !== 'Escape') return;
     if (document.querySelector('.modal-backdrop, .markup')) return; // 弹层/标记层自己处理 Esc
@@ -216,7 +233,7 @@ export function createPlayer(root, { fps = 30, onTime = () => {}, onSeekMarker =
 
   return {
     el: root, video,
-    loadFile, loadUrl, clear, setEmptyActions, setEmptyText, seek, stepFrames, stepSeconds, setMarkers, setFps, setTheater, captureFrame, setExpected,
+    loadFile, loadUrl, clear, setEmptyActions, setEmptyText, seek, stepFrames, stepSeconds, setMarkers, setFps, setTheater, captureFrame, setExpected, borrowStage,
     currentTime: () => video.currentTime || 0,
     hasFile: () => !!file,
     isHosted: () => !!(file && file.hosted),
