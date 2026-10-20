@@ -4,6 +4,8 @@ import { getVideoStore, parseRange } from './videostore.js';
 const FPS = [24, 25, 30, 50, 60];
 const MAX_IMAGE = 1900000;
 const MAX_ATTACHMENTS = 6;
+const MAX_MEDIA = 100 * 1024 * 1024;            // 视频/音频附件单个上限
+const MEDIA_KINDS = { video: /^video\//, audio: /^audio\// };
 
 // ---------- 形状 ----------
 const publicProject = (p) => ({ id: p.id, name: p.name, fps: p.fps, current_version: p.current_version, created_at: p.created_at, updated_at: p.updated_at });
@@ -17,7 +19,7 @@ const publicFeedback = (f, attachments = []) => ({
   has_annotation: !!(f.has_annotation ?? f.annotation), annotation_thumb: f.annotation_thumb ?? null,
   status: f.status, editor_note: f.editor_note, attachments, created_at: f.created_at, updated_at: f.updated_at,
 });
-const attachmentMeta = (a) => ({ id: a.id, name: a.name, mime: a.mime, size: a.size });
+const attachmentMeta = (a) => ({ id: a.id, name: a.name, mime: a.mime, size: a.size, kind: a.kind || 'image', status: a.status || 'ready' });
 
 const FEEDBACK_COLS = 'f.id, f.version_id, f.seq, f.timecode, f.text, (f.annotation IS NOT NULL) AS has_annotation, f.annotation_thumb, f.status, f.editor_note, f.created_at, f.updated_at';
 
@@ -40,6 +42,21 @@ function validateFps(v, fallback = 30) {
 }
 const isImageData = (s) => typeof s === 'string' && s.startsWith('data:image/') && s.length <= MAX_IMAGE;
 const strOrNull = (v) => (typeof v === 'string' && v ? v : null);
+/** 图片：{ name, mime, data }（压缩后 data URL）；视频/音频：{ name, mime, size, kind }，稍后分片上传 */
+function validateAttachment(a) {
+  assert(a && typeof a === 'object', 'BAD_REQUEST', '附件不合法');
+  const name = String(a.name ?? '').slice(0, 255);
+  const mime = String(a.mime ?? '');
+  if (a.data !== undefined) {
+    assert(isImageData(a.data) && mime.startsWith('image/'), 'BAD_REQUEST', '图片附件不合法或过大');
+    return { id: newId(), name: name || '图片', mime, kind: 'image', status: 'ready', data: a.data, size: a.data.length };
+  }
+  const kind = String(a.kind ?? '');
+  assert(MEDIA_KINDS[kind] && MEDIA_KINDS[kind].test(mime) && mime.length <= 64, 'BAD_REQUEST', '附件类型不支持');
+  const size = Number(a.size);
+  assert(Number.isInteger(size) && size > 0 && size <= MAX_MEDIA, 'BAD_REQUEST', `视频/音频附件最大 ${Math.round(MAX_MEDIA / 1024 / 1024)} MB`);
+  return { id: newId(), name: name || (kind === 'video' ? '视频' : '音频'), mime, kind, status: 'uploading', data: '', size };
+}
 function optionalString(v, what, max) {
   if (v == null) return null;
   assert(typeof v === 'string', 'BAD_REQUEST', `${what}必须是文字`);
@@ -58,7 +75,7 @@ async function currentVersion(ctx) {
 async function loadVersion(env, versionId) {
   const v = await env.DB.prepare('SELECT * FROM versions WHERE id = ?').bind(versionId).first();
   const fb = (await env.DB.prepare(`SELECT ${FEEDBACK_COLS} FROM feedback f WHERE f.version_id = ? AND f.deleted_at IS NULL ORDER BY f.seq ASC`).bind(versionId).all()).results;
-  const atts = (await env.DB.prepare('SELECT a.id, a.feedback_id, a.name, a.mime, length(a.data) AS size FROM attachments a JOIN feedback f ON f.id = a.feedback_id WHERE f.version_id = ? ORDER BY a.created_at ASC').bind(versionId).all()).results;
+  const atts = (await env.DB.prepare("SELECT a.id, a.feedback_id, a.name, a.mime, a.size, a.kind, a.status FROM attachments a JOIN feedback f ON f.id = a.feedback_id WHERE f.version_id = ? AND a.status != 'deleted' ORDER BY a.created_at ASC").bind(versionId).all()).results;
   return publicVersion(v, fb.map((f) => publicFeedback(f, atts.filter((a) => a.feedback_id === f.id).map(attachmentMeta))));
 }
 async function findFeedback(ctx, id) {
@@ -67,7 +84,7 @@ async function findFeedback(ctx, id) {
   return f;
 }
 async function attachmentsOf(env, feedbackId) {
-  const rows = (await env.DB.prepare('SELECT id, name, mime, length(data) AS size FROM attachments WHERE feedback_id = ? ORDER BY created_at ASC').bind(feedbackId).all()).results;
+  const rows = (await env.DB.prepare("SELECT id, name, mime, size, kind, status FROM attachments WHERE feedback_id = ? AND status != 'deleted' ORDER BY created_at ASC").bind(feedbackId).all()).results;
   return rows.map(attachmentMeta);
 }
 const need = (ctx, role) => assert(ctx.role === role, 'FORBIDDEN', '当前链接没有这个权限', 403);
@@ -123,7 +140,7 @@ export async function getState(ctx) {
   const { env, project } = ctx;
   const versions = (await env.DB.prepare('SELECT * FROM versions WHERE project_id = ? ORDER BY number ASC').bind(project.id).all()).results;
   const feedback = (await env.DB.prepare(`SELECT ${FEEDBACK_COLS} FROM feedback f JOIN versions v ON v.id = f.version_id WHERE v.project_id = ? AND f.deleted_at IS NULL ORDER BY f.seq ASC`).bind(project.id).all()).results;
-  const atts = (await env.DB.prepare('SELECT a.id, a.feedback_id, a.name, a.mime, length(a.data) AS size FROM attachments a JOIN feedback f ON f.id = a.feedback_id JOIN versions v ON v.id = f.version_id WHERE v.project_id = ? ORDER BY a.created_at ASC').bind(project.id).all()).results;
+  const atts = (await env.DB.prepare("SELECT a.id, a.feedback_id, a.name, a.mime, a.size, a.kind, a.status FROM attachments a JOIN feedback f ON f.id = a.feedback_id JOIN versions v ON v.id = f.version_id WHERE v.project_id = ? AND a.status != 'deleted' ORDER BY a.created_at ASC").bind(project.id).all()).results;
   const attsByFb = new Map();
   for (const a of atts) { if (!attsByFb.has(a.feedback_id)) attsByFb.set(a.feedback_id, []); attsByFb.get(a.feedback_id).push(attachmentMeta(a)); }
   const fbByVersion = new Map();
@@ -167,12 +184,8 @@ export async function createFeedback(ctx) {
   assert(!!annotation === !!thumb, 'BAD_REQUEST', '标记大图与缩略图要一起提供');
   if (annotation) assert(isImageData(annotation) && isImageData(thumb), 'BAD_REQUEST', '标记图片不合法或过大');
   const attachments = Array.isArray(body.attachments) ? body.attachments : [];
-  assert(attachments.length <= MAX_ATTACHMENTS, 'BAD_REQUEST', `附件最多 ${MAX_ATTACHMENTS} 张`);
-  for (const a of attachments) {
-    assert(a && isImageData(a.data), 'BAD_REQUEST', '附件不合法或过大');
-    assert(String(a.mime ?? '').startsWith('image/'), 'BAD_REQUEST', '附件只支持图片');
-    assert(String(a.name ?? '').length <= 255, 'BAD_REQUEST', '附件名太长');
-  }
+  assert(attachments.length <= MAX_ATTACHMENTS, 'BAD_REQUEST', `附件最多 ${MAX_ATTACHMENTS} 个`);
+  const attRows = attachments.map(validateAttachment);
   assert(text || annotation || attachments.length, 'BAD_REQUEST', '意见不能为空');
   let timecode = body.timecode ?? null;
   if (timecode != null) {
@@ -180,11 +193,10 @@ export async function createFeedback(ctx) {
   }
   const t = nowIso();
   const f = { id: newId(), seq: 0, timecode, text, annotation_thumb: thumb, has_annotation: !!annotation, status: 'open', editor_note: '', created_at: t, updated_at: t };
-  const attRows = attachments.map((a) => ({ id: newId(), name: String(a.name || '图片').slice(0, 255), mime: String(a.mime), data: a.data, size: a.data.length }));
   await env.DB.batch([
     env.DB.prepare('INSERT INTO feedback (id, version_id, seq, timecode, text, annotation, annotation_thumb, status, editor_note, created_at, updated_at) VALUES (?1, ?2, COALESCE((SELECT MAX(seq) FROM feedback WHERE version_id = ?2), 0) + 1, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)')
       .bind(f.id, cur.id, timecode, text, annotation, thumb, 'open', '', t),
-    ...attRows.map((a) => env.DB.prepare('INSERT INTO attachments (id, feedback_id, name, mime, data, created_at) VALUES (?,?,?,?,?,?)').bind(a.id, f.id, a.name, a.mime, a.data, t)),
+    ...attRows.map((a) => env.DB.prepare('INSERT INTO attachments (id, feedback_id, name, mime, data, created_at, kind, size, status) VALUES (?,?,?,?,?,?,?,?,?)').bind(a.id, f.id, a.name, a.mime, a.data, t, a.kind, a.size, a.status)),
     touch(env, project.id, t),
   ]);
   f.seq = (await env.DB.prepare('SELECT seq FROM feedback WHERE id = ?').bind(f.id).first()).seq;
@@ -197,9 +209,13 @@ export async function deleteFeedback(ctx) {
   const f = await findFeedback(ctx, params[0]);
   assert(f.version_number === project.current_version, 'VERSION_LOCKED', '历史版本只读，不能改动', 409);
   assert(f.version_status !== 'approved', 'VERSION_APPROVED', '这一版已确认通过，不能再删意见', 409);
+  const store = getVideoStore(env);
+  const media = (await env.DB.prepare("SELECT id, store_key FROM attachments WHERE feedback_id = ? AND kind != 'image' AND status != 'deleted'").bind(f.id).all()).results;
+  for (const a of media) if (store && a.store_key) await store.remove(a.store_key);
   const t = nowIso();
   await env.DB.batch([
     env.DB.prepare('UPDATE feedback SET deleted_at = ?, updated_at = ? WHERE id = ?').bind(t, t, f.id),
+    env.DB.prepare("UPDATE attachments SET status = 'deleted', size = 0, store_key = NULL, upload_id = NULL WHERE feedback_id = ? AND kind != 'image'").bind(f.id),
     touch(env, project.id, t),
   ]);
   return json(null, 204);
@@ -240,8 +256,9 @@ export async function getAnnotation(ctx) {
 
 export async function getAttachment(ctx) {
   const { env, project, params } = ctx;
-  const row = await env.DB.prepare('SELECT a.id, a.name, a.mime, a.data FROM attachments a JOIN feedback f ON f.id = a.feedback_id JOIN versions v ON v.id = f.version_id WHERE a.id = ? AND v.project_id = ? AND f.deleted_at IS NULL').bind(params[0], project.id).first();
+  const row = await env.DB.prepare("SELECT a.id, a.name, a.mime, a.data, a.kind, a.size, a.status FROM attachments a JOIN feedback f ON f.id = a.feedback_id JOIN versions v ON v.id = f.version_id WHERE a.id = ? AND v.project_id = ? AND f.deleted_at IS NULL AND a.status != 'deleted'").bind(params[0], project.id).first();
   assert(row, 'NOT_FOUND', '找不到这个附件', 404);
+  if (row.kind && row.kind !== 'image') return json(attachmentMeta(row));
   return json({ id: row.id, name: row.name, mime: row.mime, data: row.data });
 }
 
@@ -301,8 +318,9 @@ function storeOf(env) { const s = getVideoStore(env); assert(s, 'NO_STORAGE', '�
 const fmtMB = (n) => `${Math.round(n / 1024 / 1024)} MB`;
 
 async function videoUsage(env) {
-  const row = await env.DB.prepare("SELECT COALESCE(SUM(video_size), 0) AS n FROM versions WHERE video_status IN ('ready', 'uploading') AND video_key IS NOT NULL").first();
-  return row?.n || 0;
+  const v = await env.DB.prepare("SELECT COALESCE(SUM(video_size), 0) AS n FROM versions WHERE video_status IN ('ready', 'uploading') AND video_key IS NOT NULL").first();
+  const a = await env.DB.prepare("SELECT COALESCE(SUM(size), 0) AS n FROM attachments WHERE kind != 'image' AND status IN ('ready', 'uploading')").first();
+  return (v?.n || 0) + (a?.n || 0);
 }
 async function discardVideo(store, v) {
   if (!v.video_key) return;
@@ -397,19 +415,15 @@ export async function deleteVideo(ctx) {
   return json({ version: await loadVersion(env, v.id) });
 }
 
-/** 按 Range 转发存储里的视频，供 <video src> 直接播放 */
-export async function getVideo(ctx) {
-  const { env, params, request } = ctx;
-  const store = storeOf(env);
-  const v = await findVersion(ctx, params[0]);
-  assert(v.video_status === 'ready' && v.video_key, 'NOT_FOUND', '这一版没有托管视频', 404);
+/** 按 Range 转发存储里的文件，供 <video>/<audio> 直接播放；?download=1 时作为附件下载 */
+async function streamStored(store, key, filename, request) {
   const headers = new Headers({ 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=86400' });
-  const head = await store.head(v.video_key);
-  assert(head, 'NOT_FOUND', '视频文件不存在', 404);
+  const head = await store.head(key);
+  assert(head, 'NOT_FOUND', '文件不存在', 404);
   headers.set('Content-Type', head.mime);
   headers.set('ETag', head.etag);
   if (new URL(request.url).searchParams.get('download')) {
-    headers.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(v.video_name || 'video.mp4')}`);
+    headers.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename || 'file')}`);
   }
   if (request.method === 'HEAD') {
     headers.set('Content-Length', String(head.size));
@@ -421,13 +435,97 @@ export async function getVideo(ctx) {
     return new Response(null, { status: 416, headers });
   }
   const want = range || { offset: 0, length: head.size };
-  const res = await store.get(v.video_key, want);
-  assert(res, 'NOT_FOUND', '视频文件不存在', 404);
-  if (res.missing) { headers.set('Retry-After', '10'); fail('VIDEO_SYNCING', '视频正在同步到你附近的节点，稍后自动重试', 503); }
+  const res = await store.get(key, want);
+  assert(res, 'NOT_FOUND', '文件不存在', 404);
+  if (res.missing) fail('VIDEO_SYNCING', '文件正在同步到你附近的节点，稍后自动重试', 503);
   headers.set('Content-Length', String(want.length));
   if (range) {
     headers.set('Content-Range', `bytes ${want.offset}-${want.offset + want.length - 1}/${head.size}`);
     return new Response(res.body, { status: 206, headers });
   }
   return new Response(res.body, { status: 200, headers });
+}
+
+export async function getVideo(ctx) {
+  const { env, params, request } = ctx;
+  const store = storeOf(env);
+  const v = await findVersion(ctx, params[0]);
+  assert(v.video_status === 'ready' && v.video_key, 'NOT_FOUND', '这一版没有托管视频', 404);
+  return streamStored(store, v.video_key, v.video_name || 'video.mp4', request);
+}
+
+// ---------- 媒体附件上传（与客稿视频共用存储） ----------
+async function findAttachment(ctx, id) {
+  const a = await ctx.env.DB.prepare("SELECT a.* FROM attachments a JOIN feedback f ON f.id = a.feedback_id JOIN versions v ON v.id = f.version_id WHERE a.id = ? AND v.project_id = ? AND f.deleted_at IS NULL AND a.status != 'deleted'").bind(id, ctx.project.id).first();
+  assert(a, 'NOT_FOUND', '找不到这个附件', 404);
+  return a;
+}
+async function discardMedia(store, a) { if (a.store_key) await store.remove(a.store_key); }
+const clearMediaSql = (env, id) => env.DB.prepare('UPDATE attachments SET store_key = NULL, upload_id = NULL WHERE id = ?').bind(id);
+
+export async function attachmentUploadStart(ctx) {
+  need(ctx, 'owner');
+  const { env, project, params } = ctx;
+  const store = storeOf(env);
+  const a = await findAttachment(ctx, params[0]);
+  assert(a.kind !== 'image' && a.status === 'uploading', 'INVALID_STATE', '这个附件不需要上传', 409);
+  await discardMedia(store, a);
+  const used = await videoUsage(env); // 已含本附件声明的大小
+  assert(used <= store.totalLimit, 'STORAGE_FULL', `空间不够（已用 ${fmtMB(used)} / ${fmtMB(store.totalLimit)}），先清理旧视频或删除旧附件`, 507);
+  const key = `${project.id}/att/${a.id}`;
+  const uploadId = await store.createUpload(key, a.mime);
+  await env.DB.prepare('UPDATE attachments SET store_key = ?, upload_id = ? WHERE id = ?').bind(key, uploadId, a.id).run();
+  return json({ upload_id: uploadId, part_size: store.partSize });
+}
+
+export async function attachmentUploadPart(ctx) {
+  need(ctx, 'owner');
+  const { env, params, request } = ctx;
+  const store = storeOf(env);
+  const a = await findAttachment(ctx, params[0]);
+  const url = new URL(request.url);
+  const uploadId = url.searchParams.get('upload_id') || '';
+  const partNumber = Number(url.searchParams.get('part'));
+  assert(a.status === 'uploading' && a.upload_id && uploadId === a.upload_id, 'INVALID_STATE', '这个上传已失效，请重新开始', 409);
+  assert(Number.isInteger(partNumber) && partNumber >= 1 && partNumber <= 10000, 'BAD_REQUEST', '分片编号不合法');
+  const data = await request.arrayBuffer();
+  assert(data.byteLength > 0 && data.byteLength <= store.partSize, 'BAD_REQUEST', '分片大小不合法');
+  const etag = await store.uploadPart(a.store_key, uploadId, partNumber, data);
+  return json({ part_number: partNumber, etag });
+}
+
+export async function attachmentUploadComplete(ctx) {
+  need(ctx, 'owner');
+  const { env, project, params, request } = ctx;
+  const store = storeOf(env);
+  const a = await findAttachment(ctx, params[0]);
+  const body = await readJson(request);
+  assert(a.status === 'uploading' && a.upload_id && body.upload_id === a.upload_id, 'INVALID_STATE', '这个上传已失效，请重新开始', 409);
+  assert(Array.isArray(body.parts) && body.parts.length > 0 && body.parts.length <= 10000, 'BAD_REQUEST', '缺少分片信息');
+  const parts = body.parts.map((p) => ({ partNumber: Number(p.part_number), etag: String(p.etag) }));
+  let size;
+  try { size = await store.complete(a.store_key, a.upload_id, parts, a.mime, a.size); }
+  catch (e) { await discardMedia(store, a); await clearMediaSql(env, a.id).run(); fail('UPLOAD_FAILED', `上传校验失败：${e.message}`, 400); }
+  await env.DB.batch([
+    env.DB.prepare("UPDATE attachments SET status = 'ready', upload_id = NULL, size = ? WHERE id = ?").bind(size, a.id),
+    touch(env, project.id),
+  ]);
+  return json({ attachment: attachmentMeta({ ...a, status: 'ready', size }) });
+}
+
+export async function attachmentUploadAbort(ctx) {
+  need(ctx, 'owner');
+  const { env, params } = ctx;
+  const store = storeOf(env);
+  const a = await findAttachment(ctx, params[0]);
+  if (a.status === 'uploading') { await discardMedia(store, a); await clearMediaSql(env, a.id).run(); }
+  return json({ attachment: attachmentMeta(a) });
+}
+
+export async function getAttachmentMedia(ctx) {
+  const { env, params, request } = ctx;
+  const store = storeOf(env);
+  const a = await findAttachment(ctx, params[0]);
+  assert(a.kind !== 'image' && a.status === 'ready' && a.store_key, 'NOT_FOUND', '这个附件还没上传完成', 404);
+  return streamStored(store, a.store_key, a.name, request);
 }

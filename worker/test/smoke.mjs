@@ -79,6 +79,30 @@ await step('10 读标记大图 → 与提交一致', async () => {
 await step('11 读附件 → 与提交一致', async () => {
   const r = await req('GET', `/p/attachments/${ctx.att}`, { token: ctx.owner }); eq(r.status, 200, 'status'); eq(r.data.data, 'data:image/jpeg;base64,CCCC', 'data'); eq(r.data.name, 'ref.jpg', 'name');
 });
+await step('11b 登记视频附件 → uploading；分片上传 → ready；Range 读取一致', async () => {
+  const bytes = new Uint8Array(200 * 1024); for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
+  const r = await req('POST', '/p/feedback', { token: ctx.owner, body: { timecode: 2, text: '参考片段', attachments: [{ name: 'ref.mp4', mime: 'video/mp4', size: bytes.length, kind: 'video' }] } });
+  eq(r.status, 201, 'status'); const a = r.data.feedback.attachments[0]; eq(a.kind, 'video', 'kind'); eq(a.status, 'uploading', 'status');
+  ctx.fbMedia = r.data.feedback.id; ctx.media = a.id;
+  const s = await req('POST', `/p/attachments/${a.id}/upload/start`, { token: ctx.owner, body: {} }); eq(s.status, 200, 'start');
+  const partSize = s.data.part_size; const parts = [];
+  for (let i = 0, n = 1; i < bytes.length; i += partSize, n++) {
+    const res = await fetch(`${BASE}/p/attachments/${a.id}/upload/part?upload_id=${encodeURIComponent(s.data.upload_id)}&part=${n}`, { method: 'PUT', headers: { Authorization: `Bearer ${ctx.owner}`, 'Content-Type': 'application/octet-stream' }, body: bytes.subarray(i, Math.min(bytes.length, i + partSize)) });
+    eq(res.status, 200, 'part'); const j = await res.json(); parts.push({ part_number: j.part_number, etag: j.etag });
+  }
+  const c = await req('POST', `/p/attachments/${a.id}/upload/complete`, { token: ctx.owner, body: { upload_id: s.data.upload_id, parts } });
+  eq(c.status, 200, 'complete'); eq(c.data.attachment.status, 'ready', 'ready'); eq(c.data.attachment.size, bytes.length, 'size');
+  const g = await fetch(`${BASE}/p/attachments/${a.id}/media?t=${ctx.editor}`, { headers: { Range: 'bytes=10-19' } });
+  eq(g.status, 206, 'range status'); const buf = new Uint8Array(await g.arrayBuffer()); eq(buf.length, 10, 'range len'); eq(buf[0], 10 % 251, 'byte');
+  const st = await req('GET', '/p', { token: ctx.editor });
+  const fb = st.data.versions[0].feedback.find((f) => f.id === ctx.fbMedia); eq(fb.attachments[0].status, 'ready', '状态里也是 ready'); eq(fb.attachments[0].kind, 'video', '状态里 kind');
+});
+await step('11c 媒体附件超 100 MB / 类型不符 → 400', async () => {
+  const r = await req('POST', '/p/feedback', { token: ctx.owner, body: { timecode: 2, text: 'x', attachments: [{ name: 'big.mp4', mime: 'video/mp4', size: 101 * 1024 * 1024, kind: 'video' }] } });
+  eq(r.status, 400, '超大');
+  const r2 = await req('POST', '/p/feedback', { token: ctx.owner, body: { timecode: 2, text: 'x', attachments: [{ name: 'a.mp3', mime: 'video/mp4', size: 10, kind: 'audio' }] } });
+  eq(r2.status, 400, '类型不符');
+});
 await step('12 editor PATCH 已修改 + 修改说明 → 200', async () => {
   const r = await req('PATCH', `/p/feedback/${ctx.fb1}`, { token: ctx.editor, body: { status: 'done', editor_note: '已放大' } });
   eq(r.status, 200, 'status'); eq(r.data.feedback.status, 'done', 'status'); eq(r.data.feedback.editor_note, '已放大', 'note');
@@ -101,10 +125,14 @@ await step('17 撤回结束 → collecting', async () => {
 });
 await step('18 删除第二条 → 204，列表剩 1 条', async () => {
   const r = await req('DELETE', `/p/feedback/${ctx.fb2}`, { token: ctx.owner }); eq(r.status, 204, 'status');
-  const s = await req('GET', '/p', { token: ctx.owner }); eq(s.data.versions[0].feedback.length, 1, 'feedback 数');
+  const s = await req('GET', '/p', { token: ctx.owner }); eq(s.data.versions[0].feedback.length, 2, 'feedback 数（含媒体意见）');
 });
 await step('18b 已删意见的附件 → 404', async () => {
   const r = await req('GET', `/p/attachments/${ctx.att}`, { token: ctx.owner }); eq(r.status, 404, 'status');
+});
+await step('18c 删带媒体附件的意见 → 204；媒体 → 404', async () => {
+  const r = await req('DELETE', `/p/feedback/${ctx.fbMedia}`, { token: ctx.owner }); eq(r.status, 204, 'status');
+  const g = await fetch(`${BASE}/p/attachments/${ctx.media}/media?t=${ctx.owner}`); eq(g.status, 404, 'media 404');
 });
 await step('19 确认通过 → approved', async () => {
   const r = await req('POST', '/p/approve', { token: ctx.owner }); eq(r.status, 200, 'status'); eq(r.data.version.status, 'approved', 'status');
