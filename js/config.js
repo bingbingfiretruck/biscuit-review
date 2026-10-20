@@ -1,6 +1,6 @@
 // 部署后把 PROD_API_BASE 改成你的 Worker 地址（结尾不带斜杠），例如 'https://api.example.com/api'。
 // 留空表示没有后端，页面退回「本地模式」（数据只存在本机浏览器，不能和剪辑师共享）。
-export const PROD_API_BASE = 'https://biscuit-review-api.biscuit-review-worker.workers.dev/api';
+export const PROD_API_BASE = 'https://api.xsbingbing.top/api';
 
 const isLocalHost = ['localhost', '127.0.0.1'].includes(location.hostname);
 export const API_BASE = isLocalHost ? 'http://127.0.0.1:8787/api' : PROD_API_BASE;
