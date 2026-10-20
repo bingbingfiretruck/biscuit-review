@@ -4,12 +4,12 @@
 
 形式参考「二个零工作流程 · 在线审片」客稿页。设计稿见 `docs/superpowers/specs/`，实施计划见 `docs/superpowers/plans/`。
 
-## 线上地址（2026-10-15 已部署）
+## 线上地址（2026-10-15 部署，2026-10-20 切自定义域名）
 
 - 管理台：https://bingbingfiretruck.github.io/biscuit-review/
-- 后端 API：https://biscuit-review-api.biscuit-review-worker.workers.dev （Cloudflare Worker + D1 数据库 `biscuit-review` + KV 命名空间 `VIDEO_KV` 存视频）
+- 后端 API：https://api.xsbingbing.top （Cloudflare Worker + D1 数据库 `biscuit-review` + KV 命名空间 `VIDEO_KV` 存视频；备用地址 https://biscuit-review-api.biscuit-review-worker.workers.dev 仅国外可直连）
 - 管理口令：在本机 `worker/.admin-key.txt`（不入库）。要换口令：`cd worker && npx wrangler secret put ADMIN_KEY`。
-- 访问说明：`*.workers.dev` 在中国大陆被 DNS 污染，饼干自己在国内用时要开着代理；剪辑师在日本直接打开即可。以后不想开代理，买个域名绑到 Worker 即可（见下方部署第 1 步）。
+- 访问说明：API 走自定义域名 `api.xsbingbing.top`（域名在阿里云，DNS 托管 Cloudflare，NS 为 cody/rayne.ns.cloudflare.com，Worker 用 `wrangler.toml` 的 `routes` 绑定），国内不开代理可直连；`*.workers.dev` 在大陆被 DNS 污染，只作国外备用。
 
 ## 怎么用
 
