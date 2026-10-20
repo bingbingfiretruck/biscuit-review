@@ -690,17 +690,26 @@ function attachmentTile(a) {
     return h('div', { class: 'fb-audio' },
       h('div', { class: 'row' }, h('span', { class: 'fb-media__name' }, `${icon} ${a.name}`), h('span', { class: 'fb-media__meta' }, fmtBytes(a.size)),
         h('a', { class: 'fb-media__meta', href: state.api.mediaUrl(a.id, { download: true }) }, '下载')),
-      h('audio', { controls: true, preload: 'none', src: url }));
+      withSyncRetry(h('audio', { controls: true, preload: 'none', src: url }), url));
   }
   return h('button', { class: 'fb-media', type: 'button', title: '点击播放', onClick: () => mediaModal(a) },
     h('span', {}, '▶'), h('span', { class: 'fb-media__name' }, a.name), h('span', { class: 'fb-media__meta' }, fmtBytes(a.size)));
+}
+/** 刚上传的附件可能还没同步到附近节点（接口回 503）：出错后每 5 秒重试一次，最多 6 次 */
+function withSyncRetry(el, src) {
+  let tries = 0;
+  el.addEventListener('error', () => {
+    if (tries++ >= 6 || !el.isConnected) return;
+    setTimeout(() => { if (el.isConnected) { el.src = `${src}&r=${tries}`; el.load(); } }, 5000);
+  });
+  return el;
 }
 function mediaModal(a) {
   const onKey = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close(); } };
   const close = () => { document.removeEventListener('keydown', onKey, true); backdrop.remove(); };
   const backdrop = h('div', { class: 'modal-backdrop', onClick: (e) => { if (e.target === backdrop) close(); } },
     h('div', { class: 'modal modal--wide media-modal', role: 'dialog', 'aria-modal': 'true' },
-      h('video', { controls: true, autoplay: true, playsinline: true, src: state.api.mediaUrl(a.id) }),
+      withSyncRetry(h('video', { controls: true, autoplay: true, playsinline: true, src: state.api.mediaUrl(a.id) }), state.api.mediaUrl(a.id)),
       h('div', { class: 'modal__actions' },
         h('span', { class: 'muted small' }, `${a.name} · ${fmtBytes(a.size)}`),
         h('a', { class: 'btn btn--ghost', href: state.api.mediaUrl(a.id, { download: true }) }, '下载'),
