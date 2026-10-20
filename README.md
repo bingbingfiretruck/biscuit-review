@@ -75,6 +75,10 @@ API_BASE=https://biscuit-review-api.biscuit-review-worker.workers.dev/api ADMIN_
 2. 把页面域名加进 `worker/wrangler.toml` 的 `ALLOWED_ORIGINS`（默认已含 `https://bingbingfiretruck.github.io`），重新 `npm run deploy`。
 3. 推到 GitHub，开启 Pages（main 分支，根目录）。
 
+### 大文件上传备用
+
+浏览器上传大视频必须保持页面开着直到提示「视频已上传」；中途刷新或关页会中断，页面会显示「重新上传客稿视频」。实在传不上时可在电脑上直接走接口：`cd worker && node tools/upload-video.mjs <审片链接里的 t> <版本 id> <视频文件>`（约 1 MB/s，660 MB 六七分钟）。
+
 ## 容量与限制
 
 - D1 免费版：单库 500 MB、单行 2 MB。画面标记和参考图在浏览器压到 ≤1280px 的 JPEG 再入库，一张约 100–300 KB。
