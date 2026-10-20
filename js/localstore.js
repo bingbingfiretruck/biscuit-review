@@ -18,7 +18,7 @@ function publicFeedback(f) {
   return {
     ...rest,
     has_annotation: !!annotation,
-    attachments: (attachments || []).map((a) => ({ id: a.id, name: a.name, mime: a.mime, size: a.data.length })),
+    attachments: (attachments || []).map((a) => ({ id: a.id, name: a.name, mime: a.mime, size: a.data.length, kind: 'image', status: 'ready' })),
   };
 }
 function publicVersion(v) {
@@ -113,6 +113,7 @@ export function createLocalApi({ token = '' } = {}) {
       const okImg = (s) => s.startsWith('data:image/') && s.length <= 1900000;
       if (annotation && !(okImg(annotation) && okImg(thumb))) fail('BAD_REQUEST', '标记图片不合法或过大', 400);
       if (attachments.length > 6) fail('BAD_REQUEST', '附件最多 6 张', 400);
+      for (const a of attachments) if (!a || a.data === undefined) fail('LOCAL_MEDIA_UNSUPPORTED', '本地模式只能传图片附件', 400);
       for (const a of attachments) {
         if (!a?.data?.startsWith?.('data:image/') || a.data.length > 1900000) fail('BAD_REQUEST', '附件不合法或过大', 400);
         if (!String(a.mime || '').startsWith('image/')) fail('BAD_REQUEST', '附件只支持图片', 400);

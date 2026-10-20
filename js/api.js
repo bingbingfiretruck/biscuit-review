@@ -28,6 +28,24 @@ export function createRemoteApi({ token = '', adminKey = '', base = API_BASE } =
     if (!res.ok) throw new ApiError(data?.code || `HTTP_${res.status}`, data?.error || `请求失败（${res.status}）`, res.status);
     return data;
   }
+  /** 分片 PUT（XHR 才有上传进度） */
+  function putPart(path, blob, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', base + path);
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total); };
+      xhr.onload = () => {
+        let data = null;
+        try { data = JSON.parse(xhr.responseText); } catch { /* 非 JSON */ }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(new ApiError(data?.code || `HTTP_${xhr.status}`, data?.error || `上传失败（${xhr.status}）`, xhr.status));
+      };
+      xhr.onerror = () => reject(new ApiError('NETWORK', '上传中断，请检查网络后重试', 0));
+      xhr.send(blob);
+    });
+  }
   return {
     isLocal: false,
     getState: () => call('GET', '/p'),
@@ -51,20 +69,12 @@ export function createRemoteApi({ token = '', adminKey = '', base = API_BASE } =
     uploadAbort: (versionId) => call('POST', `/p/versions/${encodeURIComponent(versionId)}/upload/abort`),
     deleteVideo: (versionId) => call('DELETE', `/p/versions/${encodeURIComponent(versionId)}/video`),
     videoUrl: (versionId) => `${base}/p/videos/${encodeURIComponent(versionId)}?t=${encodeURIComponent(token)}`,
-    uploadPart: (versionId, uploadId, partNumber, blob, onProgress) => new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('PUT', `${base}/p/versions/${encodeURIComponent(versionId)}/upload/part?upload_id=${encodeURIComponent(uploadId)}&part=${partNumber}`);
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-      xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total); };
-      xhr.onload = () => {
-        let data = null;
-        try { data = JSON.parse(xhr.responseText); } catch { /* 非 JSON */ }
-        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
-        else reject(new ApiError(data?.code || `HTTP_${xhr.status}`, data?.error || `上传失败（${xhr.status}）`, xhr.status));
-      };
-      xhr.onerror = () => reject(new ApiError('NETWORK', '上传中断，请检查网络后重试', 0));
-      xhr.send(blob);
-    }),
+    uploadPart: (versionId, uploadId, partNumber, blob, onProgress) => putPart(`/p/versions/${encodeURIComponent(versionId)}/upload/part?upload_id=${encodeURIComponent(uploadId)}&part=${partNumber}`, blob, onProgress),
+    // 媒体附件（视频/音频）
+    attachmentUploadStart: (id) => call('POST', `/p/attachments/${encodeURIComponent(id)}/upload/start`, {}),
+    attachmentUploadComplete: (id, body) => call('POST', `/p/attachments/${encodeURIComponent(id)}/upload/complete`, body),
+    attachmentUploadAbort: (id) => call('POST', `/p/attachments/${encodeURIComponent(id)}/upload/abort`),
+    attachmentUploadPart: (id, uploadId, partNumber, blob, onProgress) => putPart(`/p/attachments/${encodeURIComponent(id)}/upload/part?upload_id=${encodeURIComponent(uploadId)}&part=${partNumber}`, blob, onProgress),
+    mediaUrl: (id, { download = false } = {}) => `${base}/p/attachments/${encodeURIComponent(id)}/media?t=${encodeURIComponent(token)}${download ? '&download=1' : ''}`,
   };
 }

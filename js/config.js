@@ -12,5 +12,7 @@ export const ANNOTATION_MAX_EDGE = 1280;
 export const THUMB_MAX_EDGE = 320;
 export const ATTACHMENT_MAX_EDGE = 1280;
 export const MAX_ATTACHMENTS = 6;
+export const MAX_MEDIA_BYTES = 100 * 1024 * 1024; // 视频/音频附件单个上限
+export const ATTACH_ACCEPT = 'image/*,video/*,audio/*,.mp4,.mov,.webm,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.amr';
 export const STATUS_LABEL = { collecting: '意见填写中', closed: '本轮反馈已结束', approved: '已确认通过' };
 export const ROLE_LABEL = { owner: '饼干', editor: '剪辑师' };

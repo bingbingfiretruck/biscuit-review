@@ -1,18 +1,18 @@
 // 审片页主逻辑：加载项目状态、渲染版本栏/播放器/右侧面板、轮询同步、提交意见。
 import {
   API_BASE, POLL_MS, STATUS_LABEL, ROLE_LABEL, FPS_OPTIONS,
-  ANNOTATION_MAX_EDGE, ATTACHMENT_MAX_EDGE, MAX_ATTACHMENTS,
+  ANNOTATION_MAX_EDGE, ATTACHMENT_MAX_EDGE, MAX_ATTACHMENTS, MAX_MEDIA_BYTES, ATTACH_ACCEPT,
 } from './config.js';
 import {
   $, h, fmtTimecode, fmtTimecodeMs, fmtDateSlash, fmtBytes, fmtDuration, fmtDate, readVideoMeta,
   toast, confirmModal, imageModal, storage, storageSet, initTheme, currentTheme, setTheme,
 } from './util.js';
-import { createRemoteApi } from './api.js';
+import { createRemoteApi } from './api.js?v=3';
 import { createLocalApi } from './localstore.js';
 import { createPlayer } from './player.js?v=2';
 import { openMarkup } from './markup.js?v=2';
-import { createComposer } from './composer.js?v=2';
-import { uploadVideo } from './upload.js';
+import { createComposer } from './composer.js?v=3';
+import { uploadVideo, uploadAttachment } from './upload.js?v=3';
 
 const token = new URLSearchParams(location.search).get('t') || '';
 
@@ -397,6 +397,7 @@ function getWriteCard(v) {
   composerKey = key;
   composer = createComposer({
     player, draft: state.draft, maxAttachments: MAX_ATTACHMENTS, attachmentMaxEdge: ATTACHMENT_MAX_EDGE,
+    maxMediaBytes: MAX_MEDIA_BYTES, accept: ATTACH_ACCEPT, localMode: state.api.isLocal,
     onSubmit: submitFeedback, onApprove: approve, onMarkup: startMarkup,
   });
   return composer.el;
@@ -434,27 +435,59 @@ function startMarkup(edit) {
 async function submitFeedback() {
   const d = state.draft;
   const text = d.text.trim();
-  if (!text && !d.annotation && d.attachments.length === 0) return toast('先写点意见，或画个标记、传张参考图', 'warn');
+  if (!text && !d.annotation && d.attachments.length === 0) return toast('先写点意见，或画个标记、传个附件', 'warn');
   if (!d.whole && !player.hasFile()) return toast('还没有打开视频：先选择客稿视频，或勾选「整片」', 'warn');
   const body = {
     timecode: d.whole ? null : (d.lockedTimecode ?? player.currentTime()),
     text,
-    attachments: d.attachments.map((a) => ({ name: a.name, mime: a.mime, data: a.data })),
+    attachments: d.attachments.map((a) => (a.kind === 'image'
+      ? { name: a.name, mime: a.mime, data: a.data }
+      : { name: a.name, mime: a.mime, size: a.size, kind: a.kind })),
   };
   if (d.annotation) { body.annotation = d.annotation.full; body.annotation_thumb = d.annotation.thumb; }
+  const mediaFiles = d.attachments.filter((a) => a.kind !== 'image');
   composer.setSubmitting(true);
   try {
     const res = await state.api.createFeedback(body);
     resetDraft();
     state.activeFeedbackId = res.feedback.id;
-    toast(`第 ${res.feedback.seq} 条意见已提交`);
+    toast(`第 ${res.feedback.seq} 条意见已提交${mediaFiles.length ? '，附件上传中' : ''}`);
     await loadState();
+    await uploadMediaAttachments(res.feedback, mediaFiles);
   } catch (e) {
     toast(e.message || '意见提交失败，请稍后重试', 'warn');
     if (e.code === 'ROUND_CLOSED' || e.code === 'INVALID_TOKEN') loadState().catch(() => {});
   } finally {
     composer.setSubmitting(false);
   }
+}
+
+/** 意见提交后，把视频/音频附件按返回的附件 id 逐个分片上传 */
+async function uploadMediaAttachments(feedback, files) {
+  if (!files.length) return;
+  const targets = feedback.attachments.filter((a) => a.kind !== 'image');
+  state.uploading = { attachments: true };
+  try {
+    for (let i = 0; i < targets.length && i < files.length; i++) {
+      const a = targets[i]; const f = files[i];
+      renderAttachUploadBar(i + 1, targets.length, f.name, 0, f.size);
+      try {
+        await uploadAttachment({ api: state.api, attachmentId: a.id, file: f.file, onProgress: (l, t) => renderAttachUploadBar(i + 1, targets.length, f.name, l, t) });
+      } catch (e) { toast(`附件「${f.name}」上传失败：${e.message || '请稍后重试'}`, 'warn'); }
+    }
+  } finally {
+    state.uploading = null;
+    els.uploadBar.hidden = true;
+    try { await loadState(); } catch { /* 轮询会再试 */ }
+  }
+}
+function renderAttachUploadBar(i, n, name, loaded, total) {
+  const pct = total ? Math.round((loaded / total) * 100) : 0;
+  els.uploadBar.hidden = false;
+  els.uploadBar.replaceChildren(
+    h('div', { class: 'row row--between' }, h('span', {}, `正在上传附件 ${i}/${n} · ${name} · ${pct}%`), h('span', { class: 'mono small' }, `${fmtBytes(loaded)} / ${fmtBytes(total)}`)),
+    h('div', { class: 'progress' }, h('div', { class: 'progress__bar', style: { width: `${pct}%` } })),
+    h('div', { class: 'hint' }, '上传期间请不要关闭页面；传完对方就能播放。'));
 }
 
 // ---------- 本轮状态 ----------
@@ -565,16 +598,16 @@ function renderItem(f, { readOnly, v, basis = false }) {
     h('span', { class: 'fb-strip__tc mono' }, f.timecode == null ? '整片' : fmtTimecodeMs(f.timecode)),
     h('span', { class: 'fb-strip__date' }, fmtDateSlash(f.created_at)),
     f.status === 'done' && h('span', { class: 'chip chip--ok' }, '已修改'),
-    f.attachments.length ? h('span', { class: 'fb-strip__date' }, `${f.attachments.length} 张参考图`) : null,
+    f.attachments.length ? h('span', { class: 'fb-strip__date' }, `${f.attachments.length} 个附件`) : null,
     h('span', { class: 'grow' }),
     canDelete ? h('button', { class: 'btn btn--sm btn--outline-danger', type: 'button', onClick: () => deleteFeedback(f) }, '删除') : null);
   const media = [];
   if (f.has_annotation && f.annotation_thumb) {
     media.push(h('img', { class: 'fb-item__thumb', src: f.annotation_thumb, alt: '画面标记', title: '点击查看大图', onClick: () => openAnnotation(f) }));
   }
-  for (const a of f.attachments) media.push(attachmentThumb(a));
+  for (const a of f.attachments) media.push(attachmentTile(a));
   const body = h('div', { class: 'fb-item__body' },
-    f.text ? h('div', { class: 'fb-item__text' }, f.text) : h('div', { class: 'fb-item__text fb-item__text--empty' }, f.has_annotation ? '（画面标记）' : '（参考图）'),
+    f.text ? h('div', { class: 'fb-item__text' }, f.text) : h('div', { class: 'fb-item__text fb-item__text--empty' }, f.has_annotation ? '（画面标记）' : '（附件）'),
     media.length ? h('div', { class: 'fb-item__media' }, ...media) : null,
     !canEdit && f.editor_note ? h('div', { class: 'fb-item__note' }, `修改说明：${f.editor_note}`) : null,
     strip);
@@ -593,7 +626,7 @@ function renderItem(f, { readOnly, v, basis = false }) {
     title: basis ? '' : (f.timecode == null ? '整片意见' : '点击跳到这个画面'),
     onClick: (e) => {
       if (basis) return;
-      if (e.target.closest('button, input, textarea, label, img, a')) return;
+      if (e.target.closest('button, input, textarea, label, img, a, audio, video')) return;
       selectFeedback(f);
     },
   }, body);
@@ -642,6 +675,38 @@ function attachmentThumb(a) {
   } });
   loadAttachment(a.id).then((d) => { img.src = d.data; }).catch(() => { img.alt = '附件读取失败'; });
   return img;
+}
+
+/** 列表里的附件：图片缩略图 / 视频卡片（弹层播放）/ 音频行内播放 / 上传中占位 */
+function attachmentTile(a) {
+  if (!a.kind || a.kind === 'image') return attachmentThumb(a);
+  const icon = a.kind === 'video' ? '🎬' : '🎵';
+  const url = state.api.mediaUrl ? state.api.mediaUrl(a.id) : null;
+  if (a.status !== 'ready' || !url) {
+    return h('div', { class: 'fb-media fb-media--pending', title: url ? '对方还没传完' : '连上服务器后才能播放' },
+      h('span', {}, icon), h('span', { class: 'fb-media__name' }, a.name), h('span', { class: 'fb-media__meta' }, url ? '上传中…' : '离线'));
+  }
+  if (a.kind === 'audio') {
+    return h('div', { class: 'fb-audio' },
+      h('div', { class: 'row' }, h('span', { class: 'fb-media__name' }, `${icon} ${a.name}`), h('span', { class: 'fb-media__meta' }, fmtBytes(a.size)),
+        h('a', { class: 'fb-media__meta', href: state.api.mediaUrl(a.id, { download: true }) }, '下载')),
+      h('audio', { controls: true, preload: 'none', src: url }));
+  }
+  return h('button', { class: 'fb-media', type: 'button', title: '点击播放', onClick: () => mediaModal(a) },
+    h('span', {}, '▶'), h('span', { class: 'fb-media__name' }, a.name), h('span', { class: 'fb-media__meta' }, fmtBytes(a.size)));
+}
+function mediaModal(a) {
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close(); } };
+  const close = () => { document.removeEventListener('keydown', onKey, true); backdrop.remove(); };
+  const backdrop = h('div', { class: 'modal-backdrop', onClick: (e) => { if (e.target === backdrop) close(); } },
+    h('div', { class: 'modal modal--wide media-modal', role: 'dialog', 'aria-modal': 'true' },
+      h('video', { controls: true, autoplay: true, playsinline: true, src: state.api.mediaUrl(a.id) }),
+      h('div', { class: 'modal__actions' },
+        h('span', { class: 'muted small' }, `${a.name} · ${fmtBytes(a.size)}`),
+        h('a', { class: 'btn btn--ghost', href: state.api.mediaUrl(a.id, { download: true }) }, '下载'),
+        h('button', { class: 'btn btn--ghost', type: 'button', onClick: close }, '关闭'))));
+  document.body.append(backdrop);
+  document.addEventListener('keydown', onKey, true);
 }
 
 function renderBasisCard(prev) {
