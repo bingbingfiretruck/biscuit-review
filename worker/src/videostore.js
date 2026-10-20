@@ -36,7 +36,7 @@ function kvStore(kv) {
   const partKey = (key, n) => `${key}/${String(n).padStart(5, '0')}`;
   const readMeta = async (key) => kv.get(metaKey(key), { type: 'json', cacheTtl: 60 });
   return {
-    kind: 'kv', partSize: KV_PART, totalLimit: KV_TOTAL, maxVideo: 400 * 1024 * 1024,
+    kind: 'kv', partSize: KV_PART, totalLimit: KV_TOTAL, maxVideo: 900 * 1024 * 1024, // 总共 1 GB：大视频只能存一版，空间不够时清更早版本
     async createUpload(key, mime) {
       await kv.put(`${key}/upload`, JSON.stringify({ mime, started: Date.now() }), { expirationTtl: 86400 });
       return `kv-${crypto.randomUUID()}`;

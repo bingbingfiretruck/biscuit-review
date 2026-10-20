@@ -78,5 +78,5 @@ API_BASE=https://biscuit-review-api.biscuit-review-worker.workers.dev/api ADMIN_
 ## 容量与限制
 
 - D1 免费版：单库 500 MB、单行 2 MB。画面标记和参考图在浏览器压到 ≤1280px 的 JPEG 再入库，一张约 100–300 KB。
-- 视频存 KV：免费 1 GB、不收流量费、无需绑卡。单个视频最大 400 MB，按 8 MB 分片经 Worker 上传；播放走 Worker 的 Range 转发；每个项目自动只保留最近两版的视频，管理台显示用量。以后要 10 GB 可开通 R2（需绑卡）后改 `wrangler.toml` 为 `[[r2_buckets]] binding = "VIDEOS"`，代码两种都支持（`worker/src/videostore.js`）。
+- 视频存 KV：免费 1 GB、不收流量费、无需绑卡。单个视频最大 900 MB，按 8 MB 分片经 Worker 上传；播放走 Worker 的 Range 转发；每个项目自动只保留最近两版的视频，空间不够时上传新版前会先清掉本项目更早版本的视频（意见和标记保留），管理台显示用量。建议剪辑师导出 ≤400 MB 的审片小样，这样能同时保留两版。以后要 10 GB 可开通 R2（需绑卡）后改 `wrangler.toml` 为 `[[r2_buckets]] binding = "VIDEOS"`，代码两种都支持（`worker/src/videostore.js`）。
 - 意见附件支持图片、视频、音频，每条最多 6 个：图片压到 ≤1280px 存 D1；视频/音频单个 ≤100 MB，按 8 MB 分片存 KV，与客稿视频共用上面的 1 GB（删意见会释放附件空间）。转码、通知推送不在范围内。

@@ -329,6 +329,20 @@ async function discardVideo(store, v) {
 }
 const clearVideoSql = (env, id) => env.DB.prepare('UPDATE versions SET video_key = NULL, video_mime = NULL, video_status = ?, upload_id = NULL WHERE id = ?').bind('none', id);
 
+/** 空间不够时，从本项目最早的版本开始清掉已托管视频，直到放得下；返回清理后的用量 */
+async function freeSpaceFor(env, store, project, v, size) {
+  let used = await videoUsage(env);
+  if (used + size <= store.totalLimit) return used;
+  const olds = (await env.DB.prepare("SELECT * FROM versions WHERE project_id = ? AND id != ? AND video_status = 'ready' AND video_key IS NOT NULL ORDER BY number ASC").bind(project.id, v.id).all()).results;
+  for (const o of olds) {
+    if (used + size <= store.totalLimit) break;
+    await discardVideo(store, o);
+    await clearVideoSql(env, o.id).run();
+    used -= o.video_size;
+  }
+  return Math.max(0, used);
+}
+
 /** 上传完成后只保留最近两版的视频，释放空间 */
 async function pruneOldVideos(env, store, project, keepFrom) {
   const old = (await env.DB.prepare("SELECT * FROM versions WHERE project_id = ? AND number < ? AND video_status = 'ready' AND video_key IS NOT NULL").bind(project.id, keepFrom).all()).results;
@@ -348,8 +362,8 @@ export async function uploadStart(ctx) {
   assert(mime.startsWith('video/') && mime.length <= 64, 'BAD_REQUEST', '只支持视频文件');
   await discardVideo(store, v);
   await clearVideoSql(env, v.id).run();
-  const used = await videoUsage(env);
-  assert(used + size <= store.totalLimit, 'STORAGE_FULL', `视频空间不够（已用 ${fmtMB(used)} / ${fmtMB(store.totalLimit)}），先在历史版本里清理旧视频`, 507);
+  const used = await freeSpaceFor(env, store, project, v, size);
+  assert(used + size <= store.totalLimit, 'STORAGE_FULL', `视频空间不够（已用 ${fmtMB(used)} / ${fmtMB(store.totalLimit)}，这个视频 ${fmtMB(size)}），先删除旧项目或旧附件释放空间`, 507);
   const key = `${project.id}/${v.id}${extOf(mime)}`;
   const uploadId = await store.createUpload(key, mime);
   await env.DB.batch([

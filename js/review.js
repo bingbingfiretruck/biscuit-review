@@ -362,8 +362,9 @@ async function startUpload(file, v) {
   try {
     const res = await uploadVideo({ api: state.api, versionId: v.id, file, onProgress: (loaded, total) => renderUploadBar(v, loaded, total) });
     toast(res.pruned ? `视频已上传；已自动清理 ${res.pruned} 个更早版本的视频释放空间` : '视频已上传，对方打开链接就能直接看');
+    if (state.connLost === false) hideBanner();
   } catch (e) {
-    toast(e.message || '上传失败', 'warn');
+    showBanner(`视频没有上传成功：${e.message || '上传失败'}。现在只是在这台设备上本地播放，刷新后就没有了，剪辑师也打不开；处理后请再点「上传客稿视频」重传。`, 'warn');
   } finally {
     state.uploading = null;
     els.uploadBar.hidden = true;
