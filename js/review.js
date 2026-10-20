@@ -340,7 +340,9 @@ function renderEmptyActions(v, { syncing = false } = {}) {
   } else if (state.api.isLocal) {
     player.setEmptyText({ title: '选择客稿视频', hint: `本地模式：请选择「${v.video_name}」（${fmtBytes(v.video_size)}），视频只在这台设备上播放。` });
   } else if (v.video_status === 'uploading' && !state.uploading) {
-    player.setEmptyText({ title: '对方正在上传视频', hint: '上传完成后会自动显示；也可以先用本地文件播放。' });
+    // 可能是对方正在传，也可能是上次上传中途关了页面：都允许重新上传
+    player.setEmptyText({ title: '视频上传中', hint: '如果是对方在传，传完会自动显示；如果是你自己上次没传完（关了页面或断网），请重新上传，之前的进度不保留。' });
+    nodes.push(h('button', { class: 'btn btn--primary', type: 'button', onClick: () => uploadInput.click() }, '重新上传客稿视频'));
   } else if (v.video_status !== 'ready') {
     player.setEmptyText({ title: '这一版还没有上传视频', hint: `上传后你和剪辑师打开链接都能直接播放。这一版的文件是「${v.video_name}」（${fmtBytes(v.video_size)}）。` });
     nodes.push(h('button', { class: 'btn btn--primary', type: 'button', onClick: () => uploadInput.click() }, '上传客稿视频'));
